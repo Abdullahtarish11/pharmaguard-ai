@@ -7,6 +7,11 @@ import Register from './pages/Register.jsx';
 import Setup from './pages/Setup.jsx';
 import Dashboard from './pages/Dashboard.jsx';
 import Diagnostics from './pages/Diagnostics.jsx';
+import Inventory from './pages/Inventory.jsx';
+import Movements from './pages/Movements.jsx';
+import Alerts from './pages/Alerts.jsx';
+import Reports from './pages/Reports.jsx';
+import Agent from './pages/Agent.jsx';
 import './styles.css';
 
 function Header() {
@@ -46,6 +51,36 @@ function Header() {
           <>
             <Link className={location.pathname === '/app' ? 'nav-link active' : 'nav-link'} to="/app">
               لوحة التحكم
+            </Link>
+            <Link
+              className={location.pathname === '/app/inventory' ? 'nav-link active' : 'nav-link'}
+              to="/app/inventory"
+            >
+              المخزون
+            </Link>
+            <Link
+              className={location.pathname === '/app/movements' ? 'nav-link active' : 'nav-link'}
+              to="/app/movements"
+            >
+              الحركات
+            </Link>
+            <Link
+              className={location.pathname === '/app/alerts' ? 'nav-link active' : 'nav-link'}
+              to="/app/alerts"
+            >
+              التنبيهات
+            </Link>
+            <Link
+              className={location.pathname === '/app/reports' ? 'nav-link active' : 'nav-link'}
+              to="/app/reports"
+            >
+              التقارير
+            </Link>
+            <Link
+              className={location.pathname === '/app/agent' ? 'nav-link active' : 'nav-link'}
+              to="/app/agent"
+            >
+              الوكيل
             </Link>
             <Link
               className={location.pathname === '/app/diagnostics' ? 'nav-link active' : 'nav-link'}
@@ -96,6 +131,46 @@ export default function App() {
                 }
               />
               <Route
+                path="/app/inventory"
+                element={
+                  <RequireAuth>
+                    <Inventory />
+                  </RequireAuth>
+                }
+              />
+              <Route
+                path="/app/movements"
+                element={
+                  <RequireAuth>
+                    <Movements />
+                  </RequireAuth>
+                }
+              />
+              <Route
+                path="/app/alerts"
+                element={
+                  <RequireAuth>
+                    <Alerts />
+                  </RequireAuth>
+                }
+              />
+              <Route
+                path="/app/reports"
+                element={
+                  <RequireAuth>
+                    <Reports />
+                  </RequireAuth>
+                }
+              />
+              <Route
+                path="/app/agent"
+                element={
+                  <RequireAuth>
+                    <Agent />
+                  </RequireAuth>
+                }
+              />
+              <Route
                 path="/app/diagnostics"
                 element={
                   <RequireAuth>
@@ -107,8 +182,8 @@ export default function App() {
             </Routes>
           </main>
           <footer className="site-footer">
-            <span>PharmaGuard AI — نسخة الربط والتأمين (بدون بيانات تجريبية)</span>
-            <span className="muted">الجداول فارغة عن قصد؛ لا تُضاف بيانات حقيقية قبل تأكيد الربط والصلاحيات.</span>
+            <span>PharmaGuard AI — نسخة جاهزة للتشغيل على بياناتك الحقيقية</span>
+            <span className="muted">لا بيانات تجريبية؛ كل الأرقام من جداول مشروعك في Supabase.</span>
           </footer>
         </div>
       </AppProvider>
