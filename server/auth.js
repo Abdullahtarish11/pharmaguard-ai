@@ -13,13 +13,15 @@ function bearerToken(req) {
 /** يتحقق من رمز الجلسة عبر Supabase ويحمّل ملف المستخدم ودوره. */
 export async function requireUser(req, res, next) {
   try {
-    const admin = getAdmin();
-    if (!admin) {
-      return httpError(res, 503, 'supabase_not_configured', 'لم تُضف مفاتيح Supabase إلى إعدادات البيئة بعد.');
-    }
+    // غياب الجلسة أولًا: 401 حتى لو لم تُضبط المفاتيح بعد
     const token = bearerToken(req);
     if (!token) {
       return httpError(res, 401, 'missing_token', 'مطلوب تسجيل الدخول.');
+    }
+
+    const admin = getAdmin();
+    if (!admin) {
+      return httpError(res, 503, 'supabase_not_configured', 'لم تُضف مفاتيح Supabase إلى إعدادات البيئة بعد.');
     }
 
     const { data, error } = await admin.auth.getUser(token);
