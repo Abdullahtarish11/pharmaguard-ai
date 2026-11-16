@@ -1,0 +1,38 @@
+{
+  "name": "PharmaGuard AI — إدارة صيدلية ذكية",
+  "short_name": "PharmaGuard",
+  "description": "نظام إدارة صيدلية: مخزون، دفعات، صلاحية، حركات، تنبيهات وتقارير مع وكيل ذكي يعتمد على بياناتك فقط.",
+  "lang": "ar",
+  "dir": "rtl",
+  "start_url": "/app",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#061310",
+  "theme_color": "#07130f",
+  "icons": [
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    { "name": "لوحة التحكم", "url": "/app" },
+    { "name": "المخزون", "url": "/app/inventory" },
+    { "name": "التنبيهات", "url": "/app/alerts" }
+  ]
+}
