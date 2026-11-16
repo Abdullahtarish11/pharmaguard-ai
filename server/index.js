@@ -9,6 +9,12 @@ import bootstrapRouter from './routes/bootstrap.js';
 import authRouter from './routes/auth.js';
 import staffRouter from './routes/staff.js';
 import diagnosticsRouter from './routes/diagnostics.js';
+import medicinesRouter from './routes/medicines.js';
+import batchesRouter from './routes/batches.js';
+import movementsRouter from './routes/movements.js';
+import alertsRouter from './routes/alerts.js';
+import reportsRouter from './routes/reports.js';
+import agentRouter from './routes/agent.js';
 import { httpError } from './util.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -61,6 +67,12 @@ app.use('/api/bootstrap', bootstrapRouter);
 app.use('/api/auth', authRouter);
 app.use('/api/staff', staffRouter);
 app.use('/api/diagnostics', diagnosticsRouter);
+app.use('/api/medicines', medicinesRouter);
+app.use('/api/batches', batchesRouter);
+app.use('/api/movements', movementsRouter);
+app.use('/api/alerts', alertsRouter);
+app.use('/api/reports', reportsRouter);
+app.use('/api/agent', agentRouter);
 
 /** ملف سياسات RLS جاهز للنسخ إلى محرر SQL في Supabase (لا يحتوي أسرارًا). */
 app.get('/api/setup/sql', async (req, res, next) => {
