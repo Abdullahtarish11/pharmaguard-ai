@@ -1,0 +1,109 @@
+import express from 'express';
+import path from 'node:path';
+import fs from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
+import { env, configState, missingConfigKeys } from './env.js';
+import { isPublicConfigured } from './supabase.js';
+import { ROLE_LABELS, SELF_REGISTER_ROLES } from './roles.js';
+import bootstrapRouter from './routes/bootstrap.js';
+import authRouter from './routes/auth.js';
+import staffRouter from './routes/staff.js';
+import diagnosticsRouter from './routes/diagnostics.js';
+import { httpError } from './util.js';
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+const distDir = path.resolve(here, '..', 'dist');
+const sqlFile = path.resolve(here, '..', 'supabase', 'apply_all.sql');
+
+const app = express();
+app.disable('x-powered-by');
+app.use(express.json({ limit: '100kb' }));
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  res.setHeader('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
+  next();
+});
+
+/** حالة عامة — بدون أي قيم سرية. */
+app.get('/api/health', (req, res) => {
+  res.json({
+    ok: true,
+    service: 'pharmaguard-ai',
+    config: configState(),
+    missing: missingConfigKeys(),
+    time: new Date().toISOString(),
+  });
+});
+
+/**
+ * إعدادات الواجهة: عنوان المشروع + المفتاح العام (anon) فقط.
+ * المفتاح العام مصمم ليكون ظاهرًا في المتصفح، والحماية الفعلية عبر RLS.
+ * مفتاح service_role لا يُرسل هنا أبدًا.
+ */
+app.get('/api/config', (req, res) => {
+  const state = configState();
+  res.json({
+    supabaseUrl: state.supabaseUrl || null,
+    supabaseAnonKey: isPublicConfigured() ? env.anonKey : null,
+    anonKeyPresent: state.anonKeyPresent,
+    serviceRolePresent: state.serviceRolePresent,
+    bootstrapTokenPresent: state.bootstrapTokenPresent,
+    ready: state.ready,
+    missing: missingConfigKeys(),
+    roleLabels: ROLE_LABELS,
+    selfRegisterRoles: [...SELF_REGISTER_ROLES],
+  });
+});
+
+app.use('/api/bootstrap', bootstrapRouter);
+app.use('/api/auth', authRouter);
+app.use('/api/staff', staffRouter);
+app.use('/api/diagnostics', diagnosticsRouter);
+
+/** ملف سياسات RLS جاهز للنسخ إلى محرر SQL في Supabase (لا يحتوي أسرارًا). */
+app.get('/api/setup/sql', async (req, res, next) => {
+  try {
+    const sql = await fs.readFile(sqlFile, 'utf8');
+    res.type('text/plain; charset=utf-8').send(sql);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.use('/api', (req, res) => httpError(res, 404, 'not_found', 'المسار غير موجود.'));
+
+app.use(express.static(distDir, { index: false, maxAge: '1h' }));
+
+app.use(async (req, res, next) => {
+  if (req.method !== 'GET') return next();
+  try {
+    const html = await fs.readFile(path.join(distDir, 'index.html'), 'utf8');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.type('html').send(html);
+  } catch {
+    res
+      .status(503)
+      .type('html')
+      .send(
+        '<!doctype html><html lang="ar" dir="rtl"><meta charset="utf-8"><body style="font-family:system-ui;background:#07130f;color:#e6f4ef;padding:40px"><h1>الواجهة غير مبنية بعد</h1><p>شغّل <code>npm run build</code> ثم أعد تشغيل السيرفر.</p></body></html>',
+      );
+  }
+});
+
+// eslint-disable-next-line no-unused-vars
+app.use((error, req, res, next) => {
+  const status = error?.status && Number.isInteger(error.status) ? error.status : 500;
+  if (status >= 500) console.error('[pharmaguard] server error:', error);
+  return httpError(res, status, error?.code ?? 'internal_error', error?.message ?? 'خطأ غير متوقع.');
+});
+
+app.listen(env.port, '0.0.0.0', () => {
+  const state = configState();
+  console.log(`[pharmaguard] listening on 0.0.0.0:${env.port}`);
+  console.log(`[pharmaguard] supabase url: ${state.supabaseUrl || '(غير مضبوط)'}`);
+  console.log(`[pharmaguard] anon key: ${state.anonKeyPresent ? 'set' : 'missing'}`);
+  console.log(`[pharmaguard] service_role: ${state.serviceRolePresent ? 'set' : 'missing'}`);
+  console.log(`[pharmaguard] bootstrap token: ${state.bootstrapTokenPresent ? 'set' : 'missing'}`);
+});
