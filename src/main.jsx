@@ -7,3 +7,10 @@ createRoot(document.getElementById('root')).render(
     <App />
   </StrictMode>,
 );
+
+// تسجيل عامل الخدمة في نسخة الإنتاج فقط (لا يخزّن أي استجابة API).
+if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch(() => undefined);
+  });
+}
