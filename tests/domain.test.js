@@ -166,8 +166,21 @@ test('التنبيهات تُشتق من البيانات فعليًا: نفاد
 
   const low = alerts.find((alert) => alert.type === 'low_stock');
   assert.equal(low.reorderLevel, 10);
-  // 4 وحدات صالحة ≤ نصف حد إعادة الطلب (5) ⇒ خطورة عالية
-  assert.equal(low.severity, 'high');
+  // الصالح للصرف = 4 (سليمة) + 2 (حرجة) = 6، وهي أكبر من نصف حد إعادة الطلب (5) ⇒ متوسطة
+  assert.equal(low.units, 6);
+  assert.equal(low.severity, 'medium');
+
+  // وحدة صالحة واحدة ≤ نصف حد إعادة الطلب (5) ⇒ خطورة عالية
+  const criticalLow = computeAlerts({
+    medicines: [shapeMedicine({ id: 'm3', name: 'صنف حرج', reorder_level: 10 }, MED_COLS)],
+    batches: [
+      shapeBatch({ id: 'b5', medicine_id: 'm3', quantity: 1, expiry_date: '2026-12-31' }, BATCH_COLS, NOW),
+    ],
+    now: NOW,
+  });
+  assert.equal(criticalLow.length, 1);
+  assert.equal(criticalLow[0].type, 'low_stock');
+  assert.equal(criticalLow[0].severity, 'high');
 
   // لا تنبيه لصنف بلا كمية ولا حد إعادة طلب
   const none = computeAlerts({
