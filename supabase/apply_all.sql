@@ -1,13 +1,28 @@
 -- ============================================================================
 -- PharmaGuard AI — سياسات الوصول (RLS) لمشروع Supabase القائم
+-- النسخة 2 (مصححة) — بعد مراجعة سطر بسطر وتشغيلها على PostgreSQL 17
 -- ============================================================================
 -- هذا الملف:
---   * لا يُنشئ أي جدول، ولا يحذف، ولا يعيد تسمية أي جدول.
---   * لا يُدخل أي بيانات تجريبية.
+--   * لا يُنشئ أي جدول، ولا يحذف، ولا يعيد تسمية أي جدول أو عمود.
+--   * لا يُدخل أي بيانات تجريبية ولا يترك أثرًا لاختبار الكتابة.
 --   * يفعّل RLS على الجداول الـ11 الموجودة.
 --   * ينشئ سياسات لأدوار: owner / pharmacist / inventory_manager.
---   * يمنع ترقية أي مستخدم نفسه إلى owner (سياسة + trigger).
+--   * يمنع أي مستخدم من ترقية نفسه إلى owner (سياسة + trigger).
+--   * يفشل بأمان (fail-closed) إن غاب عمود الصيدلية من جدول تشغيلي.
 --   * يضيف دالتين للتشخيص: pg_rls_status() و pg_selftest().
+--
+-- التصحيحات في هذه النسخة:
+--   1) تعبيرات CREATE POLICY كانت تستخدم اسمًا مستعارًا (p.id / ph.id) وهذا
+--      غير صالح: تعبير السياسة يُحلَّل مقابل جدول السياسة نفسه دون جملة FROM،
+--      فيفشل الإنشاء بـ: missing FROM-clause entry for table "p".
+--      أصبحت كل مراجع الأعمدة داخل السياسات بلا مؤهل (id, pharmacy_id, role).
+--   2) الحراسة كانت تعتمد على request.jwt.claim.role وحده، وهو غير مضبوط في
+--      PostgREST الحديث (يضبط request.jwt.claims كـ JSON فقط)، فكان trigger
+--      يمنع service_role من إنشاء أول حساب مالك. أُضيفت pg_guard_bypass().
+--   3) الجداول التشغيلية التي لا يوجد لها عمود صيدلية كانت تُفتح للقراءة
+--      للجميع (v_scope = 'true')؛ صارت تُوقف التنفيذ برسالة واضحة.
+--   4) فحص أولي للجداول والأدوار، وتحقّق من وجود anon قبل revoke.
+--   5) تحذير صريح عند تعذّر تحديد عمود المستخدم في notifications/device_tokens.
 --
 -- التشغيل: Supabase → SQL Editor → الصق الملف كاملًا → Run.
 -- آمن للتشغيل أكثر من مرة (idempotent).
@@ -16,8 +31,51 @@
 begin;
 
 -- ---------------------------------------------------------------------------
+-- 0) فحص أولي: الجداول الـ11 موجودة، وأدوار Supabase الأساسية متاحة
+--    (لا تعديل على البنية — قراءة فقط)
+-- ---------------------------------------------------------------------------
+do $pg$
+declare
+  t         text;
+  v_missing text[] := '{}';
+begin
+  foreach t in array array[
+    'profiles', 'pharmacies', 'medicines', 'inventory_batches', 'stock_movements',
+    'inventory_alerts', 'notifications', 'device_tokens', 'drug_interactions',
+    'agent_runs', 'reports'
+  ] loop
+    if not exists (
+      select 1 from information_schema.tables
+       where table_schema = 'public' and table_name = t
+    ) then
+      v_missing := v_missing || t;
+    end if;
+  end loop;
+
+  if array_length(v_missing, 1) is not null then
+    raise exception 'PharmaGuard: جداول مفقودة في schema public: % — أُوقف التنفيذ دون أي تغيير.',
+      array_to_string(v_missing, ', ');
+  end if;
+
+  if not exists (select 1 from pg_roles where rolname = 'authenticated') then
+    raise exception 'PharmaGuard: الدور authenticated غير موجود — هذا الملف مخصص لمشروع Supabase.';
+  end if;
+
+  if not exists (
+    select 1 from information_schema.columns
+     where table_schema = 'public' and table_name = 'profiles'
+       and column_name in ('id', 'user_id', 'profile_id')
+  ) then
+    raise exception 'PharmaGuard: جدول profiles بلا عمود معرّف (id/user_id/profile_id).';
+  end if;
+
+  raise notice 'PharmaGuard: الجداول الـ11 موجودة — بدء إنشاء الدوال والسياسات.';
+end $pg$;
+
+-- ---------------------------------------------------------------------------
 -- 1) دوال مساعدة: دور المستخدم الحالي وصيدليته (تُقرأ من profiles فقط)
 --    SECURITY DEFINER حتى لا تحدث حلقة RLS عند استدعائها من داخل السياسات.
+--    ملاحظة: لا تُفعّل FORCE ROW LEVEL SECURITY على profiles وإلا عادت الحلقة.
 -- ---------------------------------------------------------------------------
 do $pg$
 declare
@@ -46,13 +104,9 @@ begin
    order by array_position(array['pharmacy_id', 'pharmacy', 'store_id', 'pharmacies_id'], c.column_name)
    limit 1;
 
-  if v_id_col is null then
-    raise exception 'PharmaGuard: لم يُعثر على عمود المعرّف في جدول profiles (id/user_id/profile_id).';
-  end if;
-
   -- 1.1 دور المستخدم الحالي (مع توحيد الأسماء المرادفة)
   if v_role_col is null then
-    raise notice 'PharmaGuard: لا يوجد عمود دور في profiles — ستُعامل كل الحسابات كأدوار غير محددة.';
+    raise warning 'PharmaGuard: لا يوجد عمود دور في profiles — ستُعامل كل الحسابات كأدوار غير محددة (لا وصول).';
     execute $fn$
       create or replace function public.pg_role() returns text
       language sql stable security definer set search_path = public, pg_temp
@@ -83,7 +137,7 @@ begin
 
   -- 1.2 صيدلية المستخدم الحالي
   if v_pharm_col is null then
-    raise notice 'PharmaGuard: لا يوجد عمود صيدلية في profiles — ستكون السياسات على مستوى الدور فقط.';
+    raise warning 'PharmaGuard: لا يوجد عمود صيدلية في profiles — السياسات ستكون على مستوى الدور فقط.';
     execute $fn$
       create or replace function public.pg_pharmacy() returns text
       language sql stable security definer set search_path = public, pg_temp
@@ -108,6 +162,34 @@ revoke all on function public.pg_pharmacy() from public;
 grant execute on function public.pg_role() to authenticated, service_role;
 grant execute on function public.pg_pharmacy() to authenticated, service_role;
 
+-- 1.3 دالة تجاوز الحراسة: service_role أو اتصال إداري مباشر (SQL Editor/psql)
+--     PostgREST الحديث يضبط request.jwt.claims (JSON) فقط، وليس المطالبة المفردة.
+create or replace function public.pg_guard_bypass() returns boolean
+language plpgsql stable
+as $body$
+declare
+  v_claims text := nullif(current_setting('request.jwt.claims', true), '');
+  v_role   text := nullif(current_setting('request.jwt.claim.role', true), '');
+begin
+  if v_role is null and v_claims is not null then
+    begin
+      v_role := v_claims::jsonb ->> 'role';
+    exception when others then
+      v_role := null;
+    end;
+  end if;
+
+  -- لا مطالبات JWT إطلاقًا: اتصال إداري مباشر (SQL Editor / psql / pg_dump)
+  if v_role is null then
+    return v_claims is null;
+  end if;
+
+  return v_role in ('service_role', 'postgres', 'supabase_admin');
+end;
+$body$;
+
+revoke all on function public.pg_guard_bypass() from public;
+
 -- ---------------------------------------------------------------------------
 -- 2) تفعيل RLS على الجداول الـ11 (بدون أي تغيير في بنيتها)
 -- ---------------------------------------------------------------------------
@@ -119,17 +201,13 @@ declare
     'inventory_alerts', 'notifications', 'device_tokens', 'drug_interactions',
     'agent_runs', 'reports'
   ];
+  v_has_anon boolean := exists (select 1 from pg_roles where rolname = 'anon');
 begin
   foreach t in array v_tables loop
-    if exists (
-      select 1 from information_schema.tables
-       where table_schema = 'public' and table_name = t
-    ) then
-      execute format('alter table public.%I enable row level security', t);
-      -- الزوار المجهولون لا يملكون أي صلاحية مباشرة على الجداول
+    execute format('alter table public.%I enable row level security', t);
+    -- الزوار المجهولون لا يملكون أي صلاحية مباشرة على الجداول
+    if v_has_anon then
       execute format('revoke all on table public.%I from anon', t);
-    else
-      raise notice 'PharmaGuard: الجدول public.% غير موجود — تم تجاوزه.', t;
     end if;
   end loop;
 end $pg$;
@@ -139,6 +217,7 @@ end $pg$;
 --    - كل مستخدم يرى صفه، وموظفو نفس الصيدلية يرى بعضهم.
 --    - لا إدراج إلا لصف المستخدم نفسه بدور مسموح (المالك يُنشأ من السيرفر).
 --    - لا يمكن تغيير الدور أو الصيدلية من العميل (trigger في القسم 5).
+--    مهم: الأعمدة هنا بلا مؤهل (بدون p.) — تعبير السياسة لا يملك FROM.
 -- ---------------------------------------------------------------------------
 do $pg$
 declare
@@ -150,27 +229,27 @@ declare
 begin
   select c.column_name into v_id_col
     from information_schema.columns c
-   where c.table_schema='public' and c.table_name='profiles'
-     and c.column_name in ('id','user_id','profile_id')
-   order by array_position(array['id','user_id','profile_id'], c.column_name) limit 1;
+   where c.table_schema = 'public' and c.table_name = 'profiles'
+     and c.column_name in ('id', 'user_id', 'profile_id')
+   order by array_position(array['id', 'user_id', 'profile_id'], c.column_name) limit 1;
 
   select c.column_name into v_pharm_col
     from information_schema.columns c
-   where c.table_schema='public' and c.table_name='profiles'
-     and c.column_name in ('pharmacy_id','pharmacy','store_id','pharmacies_id')
-   order by array_position(array['pharmacy_id','pharmacy','store_id','pharmacies_id'], c.column_name) limit 1;
+   where c.table_schema = 'public' and c.table_name = 'profiles'
+     and c.column_name in ('pharmacy_id', 'pharmacy', 'store_id', 'pharmacies_id')
+   order by array_position(array['pharmacy_id', 'pharmacy', 'store_id', 'pharmacies_id'], c.column_name) limit 1;
 
   select c.column_name into v_role_col
     from information_schema.columns c
-   where c.table_schema='public' and c.table_name='profiles'
-     and c.column_name in ('role','user_role','account_role','role_name')
-   order by array_position(array['role','user_role','account_role','role_name'], c.column_name) limit 1;
+   where c.table_schema = 'public' and c.table_name = 'profiles'
+     and c.column_name in ('role', 'user_role', 'account_role', 'role_name')
+   order by array_position(array['role', 'user_role', 'account_role', 'role_name'], c.column_name) limit 1;
 
-  v_own := format('(p.%I)::text = auth.uid()::text', v_id_col);
+  v_own := format('(%I)::text = auth.uid()::text', v_id_col);
   if v_pharm_col is null then
     v_same := 'false';
   else
-    v_same := format('((p.%I) is not null and (p.%I)::text = public.pg_pharmacy())', v_pharm_col, v_pharm_col);
+    v_same := format('((%I) is not null and (%I)::text = public.pg_pharmacy())', v_pharm_col, v_pharm_col);
   end if;
 
   execute 'drop policy if exists pg_profiles_select on public.profiles';
@@ -229,28 +308,22 @@ end $pg$;
 
 -- ---------------------------------------------------------------------------
 -- 4) سياسات جدول pharmacies: كل مستخدم يرى صيدليته، والمالك وحده يعدّلها
+--    (إنشاء صيدلية جديدة يبقى للسيرفر بمفتاح الخدمة، لا من العميل)
 -- ---------------------------------------------------------------------------
 do $pg$
 declare
-  v_pharm_col text;
-  v_pharm_id  text;
-  v_own       text;
+  v_pharm_id text;
+  v_own      text;
 begin
-  select c.column_name into v_pharm_col
-    from information_schema.columns c
-   where c.table_schema='public' and c.table_name='profiles'
-     and c.column_name in ('pharmacy_id','pharmacy','store_id','pharmacies_id')
-   order by array_position(array['pharmacy_id','pharmacy','store_id','pharmacies_id'], c.column_name) limit 1;
-
   select c.column_name into v_pharm_id
     from information_schema.columns c
-   where c.table_schema='public' and c.table_name='pharmacies'
-     and c.column_name in ('id','pharmacy_id','uuid')
-   order by array_position(array['id','pharmacy_id','uuid'], c.column_name) limit 1;
+   where c.table_schema = 'public' and c.table_name = 'pharmacies'
+     and c.column_name in ('id', 'pharmacy_id', 'uuid')
+   order by array_position(array['id', 'pharmacy_id', 'uuid'], c.column_name) limit 1;
 
   v_own := case
-    when v_pharm_col is null or v_pharm_id is null then 'false'
-    else format('(ph.%I)::text = public.pg_pharmacy()', v_pharm_id)
+    when v_pharm_id is null then 'false'
+    else format('(%I)::text = public.pg_pharmacy()', v_pharm_id)
   end;
 
   execute 'drop policy if exists pg_pharmacies_select on public.pharmacies';
@@ -284,7 +357,7 @@ declare
   v_old_pharm text;
   v_me        text;
 begin
-  if coalesce(current_setting('request.jwt.claim.role', true), '') = 'service_role' then
+  if public.pg_guard_bypass() then
     return new;
   end if;
 
@@ -321,7 +394,7 @@ declare
   v_role_col text := nullif(TG_ARGV[0], '');
   v_new_role text;
 begin
-  if coalesce(current_setting('request.jwt.claim.role', true), '') = 'service_role' then
+  if public.pg_guard_bypass() then
     return new;
   end if;
 
@@ -343,15 +416,15 @@ declare
 begin
   select c.column_name into v_role_col
     from information_schema.columns c
-   where c.table_schema='public' and c.table_name='profiles'
-     and c.column_name in ('role','user_role','account_role','role_name')
-   order by array_position(array['role','user_role','account_role','role_name'], c.column_name) limit 1;
+   where c.table_schema = 'public' and c.table_name = 'profiles'
+     and c.column_name in ('role', 'user_role', 'account_role', 'role_name')
+   order by array_position(array['role', 'user_role', 'account_role', 'role_name'], c.column_name) limit 1;
 
   select c.column_name into v_pharm_col
     from information_schema.columns c
-   where c.table_schema='public' and c.table_name='profiles'
-     and c.column_name in ('pharmacy_id','pharmacy','store_id','pharmacies_id')
-   order by array_position(array['pharmacy_id','pharmacy','store_id','pharmacies_id'], c.column_name) limit 1;
+   where c.table_schema = 'public' and c.table_name = 'profiles'
+     and c.column_name in ('pharmacy_id', 'pharmacy', 'store_id', 'pharmacies_id')
+   order by array_position(array['pharmacy_id', 'pharmacy', 'store_id', 'pharmacies_id'], c.column_name) limit 1;
 
   execute 'drop trigger if exists pg_profiles_guard_update_trg on public.profiles';
   execute format(
@@ -369,11 +442,13 @@ end $pg$;
 -- ---------------------------------------------------------------------------
 -- 6) سياسات الجداول التشغيلية: قراءة لكل موظفي الصيدلية،
 --    وكتابة حسب الدور، وكل شيء مقيّد بصيدلية المستخدم.
+--    إن غاب عمود الصيدلية من جدول تشغيلي → إيقاف التنفيذ (لا فتح للبيانات).
 -- ---------------------------------------------------------------------------
 do $pg$
 declare
   t            text;
   v_write      text[];
+  v_scope_req  boolean;
   v_col        text;
   v_scope      text;
   v_scope_w    text;
@@ -382,39 +457,38 @@ declare
 begin
   for v_rec in
     select * from (values
-      ('medicines',         '{owner,inventory_manager}'::text[]),
-      ('inventory_batches', '{owner,inventory_manager}'::text[]),
-      ('stock_movements',   '{owner,inventory_manager}'::text[]),
-      ('inventory_alerts',  '{owner,inventory_manager}'::text[]),
-      ('drug_interactions', '{owner,pharmacist}'::text[]),
-      ('agent_runs',        '{owner,pharmacist}'::text[]),
-      ('reports',           '{owner,pharmacist}'::text[])
-    ) as v(tbl, write_roles)
+      ('medicines',         '{owner,inventory_manager}'::text[], true),
+      ('inventory_batches', '{owner,inventory_manager}'::text[], true),
+      ('stock_movements',   '{owner,inventory_manager}'::text[], true),
+      ('inventory_alerts',  '{owner,inventory_manager}'::text[], true),
+      ('drug_interactions', '{owner,pharmacist}'::text[],        false),
+      ('agent_runs',        '{owner,pharmacist}'::text[],        true),
+      ('reports',           '{owner,pharmacist}'::text[],        true)
+    ) as v(tbl, write_roles, scope_required)
   loop
     t := v_rec.tbl;
     v_write := v_rec.write_roles;
-
-    if not exists (
-      select 1 from information_schema.tables
-       where table_schema='public' and table_name=t
-    ) then
-      raise notice 'PharmaGuard: الجدول public.% غير موجود — تم تجاوزه.', t;
-      continue;
-    end if;
+    v_scope_req := v_rec.scope_required;
 
     select c.column_name into v_col
       from information_schema.columns c
-     where c.table_schema='public' and c.table_name=t
-       and c.column_name in ('pharmacy_id','pharmacy','store_id','pharmacies_id')
-     order by array_position(array['pharmacy_id','pharmacy','store_id','pharmacies_id'], c.column_name) limit 1;
+     where c.table_schema = 'public' and c.table_name = t
+       and c.column_name in ('pharmacy_id', 'pharmacy', 'store_id', 'pharmacies_id')
+     order by array_position(array['pharmacy_id', 'pharmacy', 'store_id', 'pharmacies_id'], c.column_name) limit 1;
 
     if v_col is null then
-      v_scope   := 'true';
-      v_scope_w := 'true';
+      if v_scope_req then
+        raise exception
+          'PharmaGuard: الجدول public.% لا يحتوي عمود صيدلية (pharmacy_id/pharmacy/store_id/pharmacies_id). أُوقف التنفيذ لتفادي فتح بيانات صيدلية لصيدلية أخرى.',
+          t;
+      end if;
+      -- جدول مرجعي عام (مثل drug_interactions): لا يحتاج نطاق صيدلية
+      v_scope     := 'true';
+      v_scope_w   := 'true';
       v_read_expr := 'public.pg_role() is not null';
     else
-      v_scope   := format('(%I)::text = public.pg_pharmacy()', v_col);
-      v_scope_w := format('(%I)::text = public.pg_pharmacy()', v_col);
+      v_scope     := format('(%I)::text = public.pg_pharmacy()', v_col);
+      v_scope_w   := v_scope;
       v_read_expr := format('public.pg_role() is not null and %s', v_scope);
     end if;
 
@@ -450,24 +524,18 @@ declare
   v_own      text;
 begin
   foreach t in array array['notifications', 'device_tokens'] loop
-    if not exists (
-      select 1 from information_schema.tables
-       where table_schema='public' and table_name=t
-    ) then
-      raise notice 'PharmaGuard: الجدول public.% غير موجود — تم تجاوزه.', t;
-      continue;
-    end if;
-
     select c.column_name into v_user_col
       from information_schema.columns c
-     where c.table_schema='public' and c.table_name=t
-       and c.column_name in ('user_id','profile_id','recipient_id','owner_id')
-     order by array_position(array['user_id','profile_id','recipient_id','owner_id'], c.column_name) limit 1;
+     where c.table_schema = 'public' and c.table_name = t
+       and c.column_name in ('user_id', 'profile_id', 'recipient_id', 'owner_id')
+     order by array_position(array['user_id', 'profile_id', 'recipient_id', 'owner_id'], c.column_name) limit 1;
 
-    v_own := case
-      when v_user_col is null then 'false'
-      else format('(%I)::text = auth.uid()::text', v_user_col)
-    end;
+    if v_user_col is null then
+      raise warning 'PharmaGuard: لا يوجد عمود مستخدم في public.% — سيمنع الوصول لهذا الجدول (fail-closed).', t;
+      v_own := 'false';
+    else
+      v_own := format('(%I)::text = auth.uid()::text', v_user_col);
+    end if;
 
     execute format('drop policy if exists %I on public.%I', 'pg_' || t || '_select', t);
     execute format(
@@ -558,13 +626,26 @@ grant execute on function public.pg_selftest(text) to service_role;
 commit;
 
 -- ---------------------------------------------------------------------------
--- 9) تحقّق سريع بعد التشغيل
+-- 9) تحقّق سريع بعد التشغيل (قراءة فقط): RLS + عدد السياسات + الأعمدة المكتشفة
 -- ---------------------------------------------------------------------------
-select table_name, rls_enabled, policy_count
-  from public.pg_rls_status()
- where table_name in (
-   'profiles','pharmacies','medicines','inventory_batches','stock_movements',
-   'inventory_alerts','notifications','device_tokens','drug_interactions',
-   'agent_runs','reports'
+select s.table_name as "الجدول",
+       s.rls_enabled  as "RLS",
+       s.policy_count as "عدد السياسات",
+       coalesce((
+         select string_agg(c.column_name, ', ' order by c.column_name)
+           from information_schema.columns c
+          where c.table_schema = 'public'
+            and c.table_name = s.table_name
+            and c.column_name in (
+              'id', 'user_id', 'profile_id', 'pharmacy_id', 'pharmacy', 'store_id',
+              'pharmacies_id', 'role', 'user_role', 'account_role', 'role_name',
+              'recipient_id', 'owner_id'
+            )
+       ), '—') as "الأعمدة المكتشفة"
+  from public.pg_rls_status() s
+ where s.table_name in (
+   'profiles', 'pharmacies', 'medicines', 'inventory_batches', 'stock_movements',
+   'inventory_alerts', 'notifications', 'device_tokens', 'drug_interactions',
+   'agent_runs', 'reports'
  )
- order by table_name;
+ order by s.table_name;
