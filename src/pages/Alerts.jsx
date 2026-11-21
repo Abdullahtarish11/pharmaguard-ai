@@ -16,10 +16,13 @@ export default function Alerts() {
   const token = session?.access_token;
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
+  const [notice, setNotice] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [resolvingKey, setResolvingKey] = useState(null);
   const [filter, setFilter] = useState('all');
 
-  const canResolve = me?.role === 'owner' || me?.role === 'pharmacist';
+  // متطابق مع server/routes/alerts.js و supabase/apply_all.sql
+  const canResolve = me?.role === 'owner' || me?.role === 'pharmacist' || me?.role === 'inventory_manager';
 
   const load = useCallback(async () => {
     if (!token) return;
@@ -49,13 +52,46 @@ export default function Alerts() {
     [alerts],
   );
 
-  async function resolveAlert(alertId) {
-    if (!token || !alertId) return;
+  async function resolveLiveAlert(alert) {
+    if (!token || !alert) return;
+    setResolvingKey(alert.key);
+    setError(null);
+    setNotice(null);
     try {
-      await api.resolveAlert(token, alertId);
+      if (alert.storedId) {
+        await api.resolveAlert(token, alert.storedId);
+      } else {
+        await api.resolveComputedAlert(token, {
+          key: alert.key,
+          type: alert.type,
+          severity: alert.severity,
+          message: alert.message,
+          medicineId: alert.medicineId ?? null,
+          batchId: alert.batchId ?? null,
+        });
+      }
+      setNotice('تم تعليم التنبيه كمحلول في سجل التنبيهات.');
       await load();
     } catch (err) {
       setError(err.message);
+    } finally {
+      setResolvingKey(null);
+    }
+  }
+
+  async function resolveStoredAlert(itemId) {
+    if (!token || !itemId) return;
+    setResolvingKey(itemId);
+    setError(null);
+    setNotice(null);
+    try {
+      await api.resolveAlert(token, itemId);
+      setNotice('تم إغلاق التنبيه المحفوظ.');
+      await load();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setResolvingKey(null);
     }
   }
 
@@ -75,6 +111,7 @@ export default function Alerts() {
         </div>
 
         {error && <div className="alert alert-error">{error}</div>}
+        {notice && <div className="alert alert-success">{notice}</div>}
 
         <div className="grid grid-3">
           <div className="stat">
@@ -118,7 +155,7 @@ export default function Alerts() {
 
       <section className="card">
         <div className="card-head">
-          <h2 className="section-title">القائمة</h2>
+          <h2 className="section-title">التنبيهات اللحظية</h2>
           <span className="badge badge-muted">{visible.length} تنبيه</span>
         </div>
 
@@ -137,7 +174,7 @@ export default function Alerts() {
                   <th>الرسالة</th>
                   <th>الخطورة</th>
                   <th>الوحدات</th>
-                  <th />
+                  <th>الحالة / إجراء</th>
                 </tr>
               </thead>
               <tbody>
@@ -160,16 +197,19 @@ export default function Alerts() {
                     </td>
                     <td>{alert.units ?? '—'}</td>
                     <td>
-                      {canResolve && alert.batchId ? (
+                      {alert.resolved ? (
+                        <span className="badge">تمت المعالجة ✓</span>
+                      ) : canResolve ? (
                         <button
-                          className="btn btn-ghost"
+                          className="btn btn-ghost btn-sm"
                           type="button"
-                          onClick={() => resolveAlert(alert.batchId)}
+                          disabled={resolvingKey === alert.key}
+                          onClick={() => resolveLiveAlert(alert)}
                         >
-                          تعليم كمقروء
+                          {resolvingKey === alert.key ? 'جارٍ الإغلاق…' : 'تعليم كمحلول'}
                         </button>
                       ) : (
-                        <span className="muted small">—</span>
+                        <span className="muted small">للمخولين بالصيدلية</span>
                       )}
                     </td>
                   </tr>
@@ -182,7 +222,7 @@ export default function Alerts() {
 
       <section className="card">
         <div className="card-head">
-          <h2 className="section-title">التنبيهات المحفوظة في الجدول</h2>
+          <h2 className="section-title">سجل التنبيهات في inventory_alerts</h2>
           <span className="badge badge-muted">{data?.stored?.items?.length ?? 0}</span>
         </div>
         {data?.stored?.error && <div className="alert alert-warn">{data.stored.error}</div>}
@@ -193,15 +233,38 @@ export default function Alerts() {
                 <tr>
                   <th>النوع</th>
                   <th>الرسالة</th>
+                  <th>الحالة</th>
                   <th>التاريخ</th>
+                  {canResolve && <th />}
                 </tr>
               </thead>
               <tbody>
                 {data.stored.items.map((item) => (
                   <tr key={item.id}>
-                    <td>{item.type ?? '—'}</td>
+                    <td>{TYPE_LABELS[item.type] ?? item.type ?? '—'}</td>
                     <td>{item.message ?? '—'}</td>
+                    <td>
+                      <span className={item.resolved ? 'badge' : 'badge badge-warn'}>
+                        {item.resolved ? 'محلول' : 'نشط'}
+                      </span>
+                    </td>
                     <td>{formatDate(item.createdAt)}</td>
+                    {canResolve && (
+                      <td>
+                        {!item.resolved ? (
+                          <button
+                            className="btn btn-ghost btn-sm"
+                            type="button"
+                            disabled={resolvingKey === item.id}
+                            onClick={() => resolveStoredAlert(item.id)}
+                          >
+                            {resolvingKey === item.id ? 'جارٍ الإغلاق…' : 'إغلاق'}
+                          </button>
+                        ) : (
+                          <span className="muted small">—</span>
+                        )}
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>
@@ -209,7 +272,7 @@ export default function Alerts() {
           </div>
         ) : (
           <p className="muted small">
-            لا توجد سجلات محفوظة في inventory_alerts. التنبيهات أعلاه محسوبة لحظيًا من المخزون ولا تعتمد على وجود سجلات.
+            لا توجد سجلات محفوظة في inventory_alerts. التنبيهات أعلاه محسوبة لحظيًا من المخزون.
           </p>
         )}
       </section>

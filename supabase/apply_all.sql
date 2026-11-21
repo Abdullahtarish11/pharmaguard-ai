@@ -446,29 +446,31 @@ end $pg$;
 -- ---------------------------------------------------------------------------
 do $pg$
 declare
-  t            text;
-  v_write      text[];
-  v_scope_req  boolean;
-  v_col        text;
-  v_scope      text;
-  v_scope_w    text;
-  v_read_expr  text;
-  v_rec        record;
+  t             text;
+  v_write       text[];
+  v_scope_req   boolean;
+  v_allow_del   boolean;
+  v_col         text;
+  v_scope       text;
+  v_scope_w     text;
+  v_read_expr   text;
+  v_rec         record;
 begin
   for v_rec in
     select * from (values
-      ('medicines',         '{owner,inventory_manager}'::text[], true),
-      ('inventory_batches', '{owner,inventory_manager}'::text[], true),
-      ('stock_movements',   '{owner,inventory_manager}'::text[], true),
-      ('inventory_alerts',  '{owner,inventory_manager}'::text[], true),
-      ('drug_interactions', '{owner,pharmacist}'::text[],        false),
-      ('agent_runs',        '{owner,pharmacist}'::text[],        true),
-      ('reports',           '{owner,pharmacist}'::text[],        true)
-    ) as v(tbl, write_roles, scope_required)
+      ('medicines',         '{owner,pharmacist,inventory_manager}'::text[], true,  true),
+      ('inventory_batches', '{owner,pharmacist,inventory_manager}'::text[], true,  true),
+      ('stock_movements',   '{owner,pharmacist,inventory_manager}'::text[], true,  false),
+      ('inventory_alerts',  '{owner,pharmacist,inventory_manager}'::text[], true,  true),
+      ('drug_interactions', '{owner,pharmacist}'::text[],                   false, true),
+      ('agent_runs',        '{owner,pharmacist,inventory_manager}'::text[], true,  true),
+      ('reports',           '{owner,pharmacist}'::text[],                   true,  true)
+    ) as v(tbl, write_roles, scope_required, allow_delete)
   loop
     t := v_rec.tbl;
     v_write := v_rec.write_roles;
     v_scope_req := v_rec.scope_required;
+    v_allow_del := v_rec.allow_delete;
 
     select c.column_name into v_col
       from information_schema.columns c
@@ -508,9 +510,11 @@ begin
       'pg_' || t || '_update', t, v_write, v_scope, v_write, v_scope_w);
 
     execute format('drop policy if exists %I on public.%I', 'pg_' || t || '_delete', t);
-    execute format(
-      'create policy %I on public.%I for delete to authenticated using (public.pg_role() = any ((%L)::text[]) and %s)',
-      'pg_' || t || '_delete', t, v_write, v_scope);
+    if v_allow_del then
+      execute format(
+        'create policy %I on public.%I for delete to authenticated using (public.pg_role() = any ((%L)::text[]) and %s)',
+        'pg_' || t || '_delete', t, v_write, v_scope);
+    end if;
   end loop;
 end $pg$;
 

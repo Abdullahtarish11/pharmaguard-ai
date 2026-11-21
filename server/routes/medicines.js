@@ -6,8 +6,10 @@ import { asyncHandler, httpError, isNonEmptyString } from '../util.js';
 import {
   inventoryColumns,
   shapeMedicine,
+  shapeBatch,
   payloadFor,
   scopeToPharmacy,
+  requirePharmacy,
   aggregateStock,
 } from '../inventory.js';
 
@@ -15,9 +17,16 @@ const router = express.Router();
 
 function guard(req, res, next) {
   if (!canWriteInventory(req.auth?.role)) {
-    return httpError(res, 403, 'forbidden_role', 'إدارة الأدوية متاحة للمالك ومسؤول المخزون.');
+    return httpError(res, 403, 'forbidden_role', 'إدارة الأدوية متاحة للمالك والصيدلي ومسؤول المخزون.');
   }
   return next();
+}
+
+function sanitizeFilter(value) {
+  return String(value ?? '')
+    .replace(/[,%()*\\]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 /** قائمة الأدوية مع البحث والكميات المحسوبة من الدفعات. */
@@ -34,15 +43,20 @@ router.get(
       return httpError(res, 404, 'table_missing', 'جدول medicines غير موجود في المشروع.');
     }
 
+    const scope = requirePharmacy(columns, 'medicines', req.auth.profile);
+    if (!scope.ok) return httpError(res, scope.status, scope.code, scope.message);
+
     const cols = columns.medicines;
+    const includeInactive = req.query.includeInactive === 'true';
     let query = admin.from('medicines').select('*').limit(500);
     query = scopeToPharmacy(query, columns, 'medicines', req.auth.profile);
-    if (cols.isActive) query = query.eq(cols.isActive, true);
+    if (cols.isActive && !includeInactive) query = query.eq(cols.isActive, true);
+    if (cols.name) query = query.order(cols.name, { ascending: true });
 
-    const search = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+    const search = typeof req.query.q === 'string' ? sanitizeFilter(req.query.q) : '';
     if (search && (cols.name || cols.scientificName || cols.barcode)) {
       const parts = [cols.name, cols.scientificName, cols.barcode].filter(Boolean);
-      query = query.or(parts.map((column) => `${column}.ilike.%${search.replace(/[,%]/g, ' ')}%`).join(','));
+      query = query.or(parts.map((column) => `${column}.ilike.%${search}%`).join(','));
     }
 
     const { data, error } = await query;
@@ -50,27 +64,16 @@ router.get(
 
     const medicines = (data ?? []).map((row) => shapeMedicine(row, cols));
 
+    const now = new Date();
     const batchCols = columns.batches;
     let batchQuery = admin.from('inventory_batches').select('*').limit(2000);
     batchQuery = scopeToPharmacy(batchQuery, columns, 'batches', req.auth.profile);
     const batchResult = await batchQuery;
     const batches = batchResult.error
       ? []
-      : (batchResult.data ?? []).map((row) => ({
-          id: row[batchCols.id] ?? null,
-          medicineId: batchCols.medicine && row[batchCols.medicine] != null ? String(row[batchCols.medicine]) : null,
-          quantity: Number(row[batchCols.quantity] ?? 0) || 0,
-          expiryBucket:
-            batchCols.expiryDate && row[batchCols.expiryDate]
-              ? new Date(row[batchCols.expiryDate]) < new Date()
-                ? 'expired'
-                : 'ok'
-              : 'unknown',
-          costPrice: Number(row[batchCols.costPrice] ?? 0) || 0,
-          sellingPrice: Number(row[batchCols.sellingPrice] ?? 0) || 0,
-        }));
+      : (batchResult.data ?? []).map((row) => shapeBatch(row, batchCols, now));
 
-    const stock = aggregateStock(batches);
+    const stock = aggregateStock(batches, now);
 
     return res.json({
       medicines: medicines.map((medicine) => {
@@ -100,7 +103,7 @@ router.get(
 router.post(
   '/',
   requireUser,
-  requireRole(ROLE.OWNER, ROLE.INVENTORY),
+  requireRole(ROLE.OWNER, ROLE.PHARMACIST, ROLE.INVENTORY),
   guard,
   asyncHandler(async (req, res) => {
     const admin = getAdmin();
@@ -108,10 +111,13 @@ router.post(
 
     const body = req.body ?? {};
     if (!isNonEmptyString(body.name, 2)) {
-      return httpError(res, 400, 'invalid_name', 'اسم الدواء مطلوب.');
+      return httpError(res, 400, 'invalid_name', 'اسم الدواء مطلوب (حرفان على الأقل).');
     }
 
     const columns = await inventoryColumns();
+    const scope = requirePharmacy(columns, 'medicines', req.auth.profile);
+    if (!scope.ok) return httpError(res, scope.status, scope.code, scope.message);
+
     const cols = columns.medicines;
     if (!cols.name) {
       return httpError(res, 400, 'name_column_missing', 'لم يُعثر على عمود اسم الدواء في جدول medicines.');
@@ -127,16 +133,15 @@ router.post(
     if (cols.strength && isNonEmptyString(body.strength)) desired[cols.strength] = String(body.strength).trim();
     if (cols.barcode && isNonEmptyString(body.barcode)) desired[cols.barcode] = String(body.barcode).trim();
     if (cols.unit && isNonEmptyString(body.unit)) desired[cols.unit] = String(body.unit).trim();
-    if (cols.reorderLevel && body.reorderLevel !== undefined) {
+    if (cols.reorderLevel && body.reorderLevel !== undefined && body.reorderLevel !== null && body.reorderLevel !== '') {
       const level = Number(body.reorderLevel);
       if (!Number.isFinite(level) || level < 0) {
         return httpError(res, 400, 'invalid_reorder_level', 'حد إعادة الطلب يجب أن يكون رقمًا غير سالب.');
       }
       desired[cols.reorderLevel] = Math.trunc(level);
     }
-    if (cols.pharmacy) {
-      const pharmacyId = req.auth.publicProfile?.pharmacyId;
-      if (pharmacyId) desired[cols.pharmacy] = pharmacyId;
+    if (cols.pharmacy && scope.pharmacyId) {
+      desired[cols.pharmacy] = scope.pharmacyId;
     }
 
     const payload = payloadFor(columns, 'medicines', desired);
@@ -151,13 +156,16 @@ router.post(
 router.patch(
   '/:id',
   requireUser,
-  requireRole(ROLE.OWNER, ROLE.INVENTORY),
+  requireRole(ROLE.OWNER, ROLE.PHARMACIST, ROLE.INVENTORY),
   guard,
   asyncHandler(async (req, res) => {
     const admin = getAdmin();
     if (!admin) return httpError(res, 503, 'supabase_not_configured', 'لم تُضف مفاتيح Supabase بعد.');
 
     const columns = await inventoryColumns();
+    const scope = requirePharmacy(columns, 'medicines', req.auth.profile);
+    if (!scope.ok) return httpError(res, scope.status, scope.code, scope.message);
+
     const cols = columns.medicines;
     const body = req.body ?? {};
     const desired = {};
@@ -173,7 +181,7 @@ router.patch(
     if (cols.strength && body.strength !== undefined) desired[cols.strength] = String(body.strength ?? '').trim() || null;
     if (cols.barcode && body.barcode !== undefined) desired[cols.barcode] = String(body.barcode ?? '').trim() || null;
     if (cols.unit && body.unit !== undefined) desired[cols.unit] = String(body.unit ?? '').trim() || null;
-    if (cols.reorderLevel && body.reorderLevel !== undefined) {
+    if (cols.reorderLevel && body.reorderLevel !== undefined && body.reorderLevel !== null && body.reorderLevel !== '') {
       const level = Number(body.reorderLevel);
       if (!Number.isFinite(level) || level < 0) {
         return httpError(res, 400, 'invalid_reorder_level', 'حد إعادة الطلب يجب أن يكون رقمًا غير سالب.');

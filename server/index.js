@@ -27,8 +27,7 @@ app.use(express.json({ limit: '100kb' }));
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Referrer-Policy', 'no-referrer');
-  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
-  res.setHeader('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
+  res.setHeader('Permissions-Policy', 'geolocation=(), microphone=(), camera=(self)');
   next();
 });
 
@@ -86,10 +85,20 @@ app.get('/api/setup/sql', async (req, res, next) => {
 
 app.use('/api', (req, res) => httpError(res, 404, 'not_found', 'المسار غير موجود.'));
 
-app.use(express.static(distDir, { index: false, maxAge: '1h' }));
+app.use(
+  express.static(distDir, {
+    index: false,
+    maxAge: '1h',
+    setHeaders: (res, filePath) => {
+      if (filePath.endsWith('sw.js') || filePath.endsWith('manifest.webmanifest')) {
+        res.setHeader('Cache-Control', 'no-cache');
+      }
+    },
+  }),
+);
 
 app.use(async (req, res, next) => {
-  if (req.method !== 'GET') return next();
+  if (req.method !== 'GET' && req.method !== 'HEAD') return next();
   try {
     const html = await fs.readFile(path.join(distDir, 'index.html'), 'utf8');
     res.setHeader('Cache-Control', 'no-cache');

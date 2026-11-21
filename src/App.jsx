@@ -1,6 +1,8 @@
+import { useEffect, useState } from 'react';
 import { BrowserRouter, Link, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { AppProvider, LoadingScreen, useApp } from './context.jsx';
 import { roleLabel } from './labels.js';
+import { OfflineIndicator, PWAInstallButton } from './components/PwaControls.jsx';
 import Landing from './pages/Landing.jsx';
 import Login from './pages/Login.jsx';
 import Register from './pages/Register.jsx';
@@ -17,7 +19,12 @@ import './styles.css';
 function Header() {
   const { session, me, signOut, config } = useApp();
   const location = useLocation();
+  const [menuOpen, setMenuOpen] = useState(false);
   const role = me?.role ?? null;
+
+  useEffect(() => {
+    setMenuOpen(false);
+  }, [location.pathname]);
 
   return (
     <header className="site-header">
@@ -30,13 +37,24 @@ function Header() {
           <span className="brand-sub">إدارة صيدلية محمية</span>
         </div>
       </div>
-      <nav className="site-nav">
+
+      <button
+        className="btn btn-ghost btn-sm nav-toggle"
+        type="button"
+        aria-expanded={menuOpen}
+        aria-label="تبديل قائمة التنقل"
+        onClick={() => setMenuOpen((prev) => !prev)}
+      >
+        {menuOpen ? '✕ إغلاق' : '☰ القائمة'}
+      </button>
+
+      <nav className={`site-nav${menuOpen ? ' open' : ''}`}>
         {!session && (
           <>
             <Link className={location.pathname === '/' ? 'nav-link active' : 'nav-link'} to="/">
               الرئيسية
             </Link>
-            <Link className="nav-link" to="/setup">
+            <Link className={location.pathname === '/setup' ? 'nav-link active' : 'nav-link'} to="/setup">
               تهيئة المالك
             </Link>
             <Link className="btn btn-ghost" to="/login">
@@ -97,6 +115,7 @@ function Header() {
             </button>
           </>
         )}
+        <PWAInstallButton />
         {config && !config.anonKeyPresent && <span className="badge badge-warn">قاعدة البيانات غير مربوطة</span>}
       </nav>
     </header>
@@ -181,8 +200,9 @@ export default function App() {
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
           </main>
+          <OfflineIndicator />
           <footer className="site-footer">
-            <span>PharmaGuard AI — نسخة جاهزة للتشغيل على بياناتك الحقيقية</span>
+            <span>PharmaGuard AI — إدارة صيدلية ذكية محمية</span>
             <span className="muted">لا بيانات تجريبية؛ كل الأرقام من جداول مشروعك في Supabase.</span>
           </footer>
         </div>

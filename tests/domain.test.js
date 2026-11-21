@@ -8,6 +8,14 @@ import {
   shapeBatch,
   shapeMovement,
   movementDelta,
+  MOVEMENT_TYPES,
+  INCREASING_MOVEMENTS,
+  DECREASING_MOVEMENTS,
+  MOVEMENT_TYPE_LABELS,
+  sortBatchesFefo,
+  planFefoDispense,
+  findFefoBlockingBatch,
+  requirePharmacy,
   aggregateStock,
   computeAlerts,
   buildInventorySummary,
@@ -236,4 +244,112 @@ test('ملخص المخزون يعطي أرقامًا وقيمة من الدفع
   assert.equal(summary.lowStock.length, 0);
   // الدفعة المنتهية لا تُحتسب «قريبة الانتهاء»
   assert.equal(summary.expiring.length, 0);
+
+  // التحقق من تضمين medicineName عند وجود دفعة قريبة الانتهاء
+  const expiringSummary = buildInventorySummary(
+    {
+      medicines: [shapeMedicine({ id: 'm3', name: 'أموكسيسيلين', reorder_level: 1 }, MED_COLS)],
+      batches: [
+        shapeBatch({ id: 'b3', medicine_id: 'm3', batch_number: 'LOT-3', quantity: 5, expiry_date: '2026-02-01' }, BATCH_COLS, NOW),
+      ],
+      movements: [],
+    },
+    NOW,
+  );
+  assert.equal(expiringSummary.expiring.length, 1);
+  assert.equal(expiringSummary.expiring[0].medicineName, 'أموكسيسيلين');
 });
+
+test('أنواع الحركات الموحدة تغطي الوارد والصادر وتطابق التسميات العربية', () => {
+  assert.deepEqual(MOVEMENT_TYPES, ['receive', 'dispense', 'adjust', 'write_off', 'return']);
+  for (const type of MOVEMENT_TYPES) {
+    assert.ok(MOVEMENT_TYPE_LABELS[type], `تسمية ${type} يجب أن تكون معرّفة`);
+    const isIn = INCREASING_MOVEMENTS.includes(type);
+    const isOut = DECREASING_MOVEMENTS.includes(type);
+    assert.notEqual(isIn, isOut, `${type} يجب أن ينتمي إلى الوارد أو الصادر فقط`);
+  }
+});
+
+test('ترتيب وتخطيط الصرف وفق FEFO يستبعد المنتهي والفارغ ويصرف من الأقرب انتهاءً أولًا', () => {
+  const batches = [
+    shapeBatch(
+      { id: 'b-late', medicine_id: 'm1', batch_number: 'LATE', quantity: 8, expiry_date: '2026-10-01', received_at: '2026-01-01T00:00:00Z' },
+      BATCH_COLS,
+      NOW,
+    ),
+    shapeBatch(
+      { id: 'b-expired', medicine_id: 'm1', batch_number: 'EXP', quantity: 20, expiry_date: '2026-01-01', received_at: '2025-12-01T00:00:00Z' },
+      BATCH_COLS,
+      NOW,
+    ),
+    shapeBatch(
+      { id: 'b-empty', medicine_id: 'm1', batch_number: 'ZERO', quantity: 0, expiry_date: '2026-02-01', received_at: '2025-12-10T00:00:00Z' },
+      BATCH_COLS,
+      NOW,
+    ),
+    shapeBatch(
+      { id: 'b-early', medicine_id: 'm1', batch_number: 'EARLY', quantity: 4, expiry_date: '2026-03-01', received_at: '2026-01-05T00:00:00Z' },
+      BATCH_COLS,
+      NOW,
+    ),
+    shapeBatch(
+      { id: 'b-nodate', medicine_id: 'm1', batch_number: 'NODATE', quantity: 3, expiry_date: null, received_at: '2026-01-02T00:00:00Z' },
+      BATCH_COLS,
+      NOW,
+    ),
+  ];
+
+  const sorted = sortBatchesFefo(batches, NOW);
+  assert.deepEqual(
+    sorted.map((b) => b.id),
+    ['b-early', 'b-late', 'b-nodate'],
+  );
+
+  // صرف 6 وحدات يجب أن يأخذ 4 من b-early ثم 2 من b-late فقط
+  const plan = planFefoDispense(batches, 6, NOW);
+  assert.equal(plan.ok, true);
+  assert.equal(plan.available, 15);
+  assert.deepEqual(
+    plan.allocations.map((a) => ({ batchId: a.batchId, take: a.take, newQuantity: a.newQuantity })),
+    [
+      { batchId: 'b-early', take: 4, newQuantity: 0 },
+      { batchId: 'b-late', take: 2, newQuantity: 6 },
+    ],
+  );
+
+  // طلب أكبر من الصالح المتاح (15) يُرفض حتى مع وجود 20 وحدة منتهية الصلاحية
+  const over = planFefoDispense(batches, 16, NOW);
+  assert.equal(over.ok, false);
+  assert.equal(over.reason, 'insufficient_quantity');
+  assert.equal(over.available, 15);
+
+  // الكميات السالبة أو الكسرية مرفوضة
+  assert.equal(planFefoDispense(batches, 0, NOW).reason, 'invalid_quantity');
+  assert.equal(planFefoDispense(batches, -2, NOW).reason, 'invalid_quantity');
+  assert.equal(planFefoDispense(batches, 1.5, NOW).reason, 'invalid_quantity');
+
+  // فحص المنع عند اختيار دفعة متأخرة يدويًا بينما توجد دفعة أقرب انتهاءً
+  const blocked = findFefoBlockingBatch(batches, batches[0], NOW); // b-late
+  assert.equal(blocked?.id, 'b-early');
+  assert.equal(findFefoBlockingBatch(batches, batches[3], NOW), null); // b-early
+
+  // دفعتان بنفس تاريخ الانتهاء لا تمنع إحداهما الأخرى
+  const sameExpiry = [
+    shapeBatch({ id: 's1', medicine_id: 'm2', quantity: 3, expiry_date: '2026-04-01' }, BATCH_COLS, NOW),
+    shapeBatch({ id: 's2', medicine_id: 'm2', quantity: 5, expiry_date: '2026-04-01' }, BATCH_COLS, NOW),
+  ];
+  assert.equal(findFefoBlockingBatch(sameExpiry, sameExpiry[1], NOW), null);
+});
+
+test('requirePharmacy يرفض المستخدم غير المرتبط بصيدلية عند وجود عمود pharmacy_id', () => {
+  const columns = { batches: BATCH_COLS, movements: MOVEMENT_COLS };
+  const unlinked = requirePharmacy(columns, 'batches', { role: 'owner', pharmacy_id: null });
+  assert.equal(unlinked.ok, false);
+  assert.equal(unlinked.status, 403);
+  assert.equal(unlinked.code, 'pharmacy_not_linked');
+
+  const linked = requirePharmacy(columns, 'batches', { role: 'owner', pharmacy_id: 'ph-1' });
+  assert.equal(linked.ok, true);
+  assert.equal(linked.pharmacyId, 'ph-1');
+});
+

@@ -1,11 +1,34 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api.js';
 import { useApp } from '../context.jsx';
+import ExpiryAlertsPanel from '../components/ExpiryAlertsPanel.jsx';
 
 export default function Landing() {
-  const { config } = useApp();
+  const { config, session, me } = useApp();
   const [status, setStatus] = useState(null);
+  const [expiryData, setExpiryData] = useState({ summary: null, alerts: [], loading: false });
+
+  const token = session?.access_token;
+  const isLinked = Boolean(me?.pharmacyId);
+
+  const loadExpiryAlerts = useCallback(async () => {
+    if (!token || !isLinked) return;
+    setExpiryData((prev) => ({ ...prev, loading: true }));
+    try {
+      const [summaryRes, alertsRes] = await Promise.all([
+        api.reportSummary(token).catch(() => null),
+        api.alerts(token).catch(() => null),
+      ]);
+      setExpiryData({
+        summary: summaryRes?.summary ?? null,
+        alerts: Array.isArray(alertsRes?.alerts) ? alertsRes.alerts : [],
+        loading: false,
+      });
+    } catch {
+      setExpiryData((prev) => ({ ...prev, loading: false }));
+    }
+  }, [token, isLinked]);
 
   useEffect(() => {
     let alive = true;
@@ -22,41 +45,56 @@ export default function Landing() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!token || !isLinked) return undefined;
+    loadExpiryAlerts();
+    const timer = setInterval(loadExpiryAlerts, 60_000);
+    return () => clearInterval(timer);
+  }, [token, isLinked, loadExpiryAlerts]);
+
   const keysReady = Boolean(config?.anonKeyPresent && config?.serviceRolePresent);
 
   return (
     <div className="grid">
       <section className="hero">
         <div>
-          <span className="eyebrow">مرحلة الربط والتأمين</span>
-          <h1>PharmaGuard AI — صيدلية محمية بصلاحيات دقيقة</h1>
+          <span className="eyebrow">PharmaGuard AI • شِراع 2026</span>
+          <h1>إدارة صيدلية ذكية وآمنة على بياناتك الحقيقية</h1>
           <p className="lead">
-            المشروع مربوط بمشروع Supabase القائم لديك عبر متغيرات بيئة فقط. لا نُنشئ مشروعًا جديدًا، ولا جداول
-            بديلة، ولا بيانات تجريبية. كل ما يظهر الآن هو حالة الاتصال والأدوار وسياسات الوصول.
+            منصة متكاملة لإدارة المخزون الدوائي وفق قاعدة FEFO، وتتبع الحركات، وكشف التنبيهات اللحظية،
+            وفحص التداخلات الدوائية عبر ثلاثة وكلاء ذكيين يعملون حصريًا على جداول Supabase المحمية بعزل الصيدليات وRLS.
           </p>
           <div className="btn-row">
-            <Link className="btn btn-primary" to="/setup">
-              تهيئة أول مالك
-            </Link>
-            <Link className="btn btn-ghost" to="/login">
-              تسجيل الدخول
-            </Link>
-            <Link className="btn btn-soft" to="/register">
-              إنشاء حساب موظف
-            </Link>
+            {session ? (
+              <Link className="btn btn-primary" to="/app">
+                الانتقال إلى لوحة التحكم
+              </Link>
+            ) : (
+              <>
+                <Link className="btn btn-primary" to="/login">
+                  تسجيل الدخول
+                </Link>
+                <Link className="btn btn-soft" to="/register">
+                  إنشاء حساب موظف
+                </Link>
+                <Link className="btn btn-ghost" to="/setup">
+                  تهيئة أول مالك
+                </Link>
+              </>
+            )}
           </div>
         </div>
 
         <div className="card">
           <div className="card-head">
-            <h2 className="section-title">حالة الربط</h2>
+            <h2 className="section-title">حالة الربط الحي</h2>
             <span className={keysReady ? 'badge' : 'badge badge-warn'}>
               {keysReady ? 'المفاتيح مضبوطة' : 'بانتظار المفاتيح'}
             </span>
           </div>
           <dl className="kv">
             <dt>مشروع Supabase</dt>
-            <dd>{config?.supabaseUrl || '—'}</dd>
+            <dd dir="ltr">{config?.supabaseUrl || '—'}</dd>
             <dt>المفتاح العام</dt>
             <dd>{config?.anonKeyPresent ? 'مضبوط (آمن للمتصفح)' : 'غير مضبوط'}</dd>
             <dt>مفتاح الخدمة</dt>
@@ -81,43 +119,51 @@ export default function Landing() {
         </div>
       </section>
 
+      {isLinked && (
+        <ExpiryAlertsPanel
+          summary={expiryData.summary}
+          alerts={expiryData.alerts}
+          loading={expiryData.loading}
+          onRefresh={loadExpiryAlerts}
+        />
+      )}
+
       <section className="grid grid-3">
         <div className="card">
-          <h3 className="section-title">١. ربط واحد وثابت</h3>
+          <h3 className="section-title">١. مخزون دقيق ونظام FEFO</h3>
           <p className="muted small">
-            التطبيق يقرأ عنوان المشروع والمفتاح العام من السيرفر وقت التشغيل، لا يوجد أي مفتاح مكتوب داخل الكود أو
-            ملفات الواجهة.
+            إدارة الأدوية والدفعات وتواريخ الصلاحية مع تطبيق قاعدة الأقرب انتهاءً أولًا (FEFO) ومنع الصرف
+            منتهي الصلاحية أو النزول تحت الصفر.
           </p>
         </div>
         <div className="card">
-          <h3 className="section-title">٢. ثلاثة أدوار فقط</h3>
+          <h3 className="section-title">٢. ثلاثة وكلاء ذكيين بلا اختلاق</h3>
           <p className="muted small">
-            مالك الصيدلية، صيدلي، مسؤول المخزون. دور المالك لا يُتاح في نموذج التسجيل، ولا يمكن لأي مستخدم منحه
-            لنفسه.
+            وكيل إدارة المخزون وإعادة الطلب، وكيل سلامة الأدوية من جدول التداخلات الفعلي، ووكيل التحليل والتقارير
+            بأرقام موثقة.
           </p>
         </div>
         <div className="card">
-          <h3 className="section-title">٣. RLS مفعّل</h3>
+          <h3 className="section-title">٣. عزل الصيدليات وصلاحيات RLS</h3>
           <p className="muted small">
-            كل جدول من الجداول الـ11 يبقى محميًا بسياسات تقرأ الدور والصيدلية من ملف المستخدم نفسه، لا من مدخلات
-            المتصفح.
+            ثلاثة أدوار مفصولة الصلاحيات (مالك الصيدلية، صيدلي، مسؤول المخزون) مع عزل كامل لبيانات كل صيدلية
+            على مستوى قاعدة البيانات والخادم.
           </p>
         </div>
       </section>
 
       <section className="card">
-        <h2 className="section-title">ما الذي لم يُبنَ بعد؟</h2>
-        <p className="muted">
-          وظائف المخزون والوكيل الذكي مؤجلة عن قصد حتى تأكيد نجاح الربط والقراءة والكتابة والصلاحيات على مشروع
-          قاعدة البيانات القائم. بعد التأكيد تُبنى هذه الوحدات فوق نفس الجداول دون تغيير بنيتها.
+        <h2 className="section-title">الوحدات التشغيلية المتصلة بـ Supabase</h2>
+        <p className="muted small">
+          جميع الوحدات التالية مربوطة مباشرةً بالجداول الـ11 دون بيانات وهمية وجاهزة للعمل فور تسجيل الدخول:
         </p>
         <div className="pill-list">
-          <span className="pill">inventory_batches</span>
-          <span className="pill">stock_movements</span>
-          <span className="pill">inventory_alerts</span>
-          <span className="pill">drug_interactions</span>
-          <span className="pill">agent_runs</span>
-          <span className="pill">reports</span>
+          <span className="pill">الأدوية والدفعات (FEFO)</span>
+          <span className="pill">حركات الاستلام والصرف والإتلاف</span>
+          <span className="pill">تنبيهات النقص والصلاحية</span>
+          <span className="pill">التقارير وحفظ اللقطات</span>
+          <span className="pill">الوكيل الذكي وسجل الأسئلة</span>
+          <span className="pill">تطبيق ويب متقدم (PWA)</span>
         </div>
       </section>
     </div>

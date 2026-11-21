@@ -3,11 +3,20 @@ import { api } from '../api.js';
 import { useApp } from '../context.jsx';
 import { formatDate } from '../labels.js';
 
+const MOVEMENT_LABELS = {
+  receive: 'استلام',
+  dispense: 'صرف',
+  adjust: 'تعديل',
+  write_off: 'إتلاف',
+  return: 'إرجاع',
+};
+
 export default function Reports() {
   const { session, me } = useApp();
   const token = session?.access_token;
   const [data, setData] = useState(null);
   const [saved, setSaved] = useState(null);
+  const [selectedReport, setSelectedReport] = useState(null);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -57,6 +66,8 @@ export default function Reports() {
   const lowStock = Array.isArray(summary?.lowStock) ? summary.lowStock : [];
   const expiring = Array.isArray(summary?.expiring) ? summary.expiring : [];
   const movementsByType = summary?.movementsByType ?? {};
+  const typeLabels = { ...MOVEMENT_LABELS, ...(data?.typeLabels ?? {}) };
+  const activeErrors = Object.entries(data?.dataErrors ?? {}).filter(([, value]) => Boolean(value));
 
   return (
     <div className="grid">
@@ -68,9 +79,12 @@ export default function Reports() {
               {data?.generatedFrom ?? 'أرقام محسوبة من جداول قاعدة بياناتك الحالية.'}
             </p>
           </div>
-          <div className="btn-row">
+          <div className="btn-row" style={{ marginTop: 0 }}>
             <button className="btn btn-soft" type="button" onClick={load} disabled={busy}>
               {busy ? 'جارٍ الحساب…' : 'تحديث'}
+            </button>
+            <button className="btn btn-ghost" type="button" onClick={() => window.print()} disabled={!summary}>
+              طباعة / PDF
             </button>
             {canSave && (
               <button className="btn btn-primary" type="button" onClick={saveReport} disabled={saving || !summary}>
@@ -82,9 +96,9 @@ export default function Reports() {
 
         {error && <div className="alert alert-error">{error}</div>}
         {notice && <div className="alert alert-success">{notice}</div>}
-        {data?.dataErrors && Object.keys(data.dataErrors).length > 0 && (
+        {activeErrors.length > 0 && (
           <div className="alert alert-warn">
-            تعذر قراءة بعض الجداول: {Object.entries(data.dataErrors).map(([key, value]) => `${key}: ${value}`).join(' • ')}
+            تعذر قراءة بعض الجداول: {activeErrors.map(([key, value]) => `${key}: ${value}`).join(' • ')}
           </div>
         )}
 
@@ -166,6 +180,7 @@ export default function Reports() {
               <table>
                 <thead>
                   <tr>
+                    <th>الدواء</th>
                     <th>الدفعة</th>
                     <th>الكمية</th>
                     <th>الصلاحية</th>
@@ -175,6 +190,7 @@ export default function Reports() {
                 <tbody>
                   {expiring.map((row) => (
                     <tr key={row.batchId}>
+                      <td>{row.medicineName ?? '—'}</td>
                       <td>{row.batchNumber ?? row.batchId}</td>
                       <td>{row.quantity}</td>
                       <td dir="ltr">{row.expiryDate}</td>
@@ -198,7 +214,7 @@ export default function Reports() {
           <div className="pill-list">
             {Object.entries(movementsByType).map(([type, total]) => (
               <span className="pill" key={type}>
-                {type}: {total}
+                {typeLabels[type] ?? type}: {total}
               </span>
             ))}
           </div>
@@ -221,14 +237,24 @@ export default function Reports() {
                   <th>العنوان</th>
                   <th>النوع</th>
                   <th>التاريخ</th>
+                  <th />
                 </tr>
               </thead>
               <tbody>
                 {saved.reports.map((report) => (
                   <tr key={report.id}>
                     <td>{report.title ?? '—'}</td>
-                    <td>{report.type ?? '—'}</td>
+                    <td>{report.type === 'inventory_snapshot' ? 'لقطة مخزون' : report.type ?? '—'}</td>
                     <td>{formatDate(report.createdAt)}</td>
+                    <td>
+                      <button
+                        className="btn btn-soft btn-sm"
+                        type="button"
+                        onClick={() => setSelectedReport(report)}
+                      >
+                        عرض التفاصيل
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -238,6 +264,45 @@ export default function Reports() {
           <p className="muted small">لا توجد لقطات محفوظة. زر «حفظ لقطة» يضيف سجلًا في جدول reports فقط.</p>
         )}
       </section>
+
+      {selectedReport && (
+        <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="تفاصيل اللقطة المحفوظة">
+          <div className="modal-card">
+            <h3 className="section-title">{selectedReport.title ?? 'تفاصيل التقرير'}</h3>
+            <p className="muted small">التاريخ: {formatDate(selectedReport.createdAt)}</p>
+            {selectedReport.payload?.summary ? (
+              <div className="grid grid-2" style={{ marginBottom: '1rem' }}>
+                <div className="stat">
+                  <span>الأدوية / الدفعات</span>
+                  <strong>
+                    {selectedReport.payload.summary.counts?.medicines ?? 0} /{' '}
+                    {selectedReport.payload.summary.counts?.batches ?? 0}
+                  </strong>
+                </div>
+                <div className="stat">
+                  <span>الوحدات الصالحة</span>
+                  <strong>{selectedReport.payload.summary.units?.sellable ?? 0}</strong>
+                </div>
+                <div className="stat">
+                  <span>التكلفة</span>
+                  <strong>{selectedReport.payload.summary.value?.cost ?? 0}</strong>
+                </div>
+                <div className="stat">
+                  <span>البيع</span>
+                  <strong>{selectedReport.payload.summary.value?.selling ?? 0}</strong>
+                </div>
+              </div>
+            ) : (
+              <pre className="code">{JSON.stringify(selectedReport.payload ?? {}, null, 2)}</pre>
+            )}
+            <div className="btn-row">
+              <button className="btn btn-primary" type="button" onClick={() => setSelectedReport(null)}>
+                إغلاق
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

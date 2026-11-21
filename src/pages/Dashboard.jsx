@@ -2,39 +2,94 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api.js';
 import { useApp } from '../context.jsx';
-import { roleLabel } from '../labels.js';
+import { SELF_REGISTER_ROLES, roleLabel } from '../labels.js';
 import CompleteProfile from './CompleteProfile.jsx';
+import ExpiryAlertsPanel from '../components/ExpiryAlertsPanel.jsx';
 
 export default function Dashboard() {
   const { me, meError, session, config } = useApp();
   const [report, setReport] = useState(null);
   const [staff, setStaff] = useState(null);
+  const [summary, setSummary] = useState(null);
+  const [alertsList, setAlertsList] = useState([]);
+  const [alertCounts, setAlertCounts] = useState(null);
   const [error, setError] = useState(null);
+  const [notice, setNotice] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [updatingId, setUpdatingId] = useState(null);
 
   const token = session?.access_token;
   const isOwner = me?.role === 'owner';
   const hasProfile = me?.hasProfile === true;
+  const isLinked = Boolean(me?.pharmacyId);
 
-  const loadOwnerData = useCallback(async () => {
-    if (!token || !isOwner) return;
+  const loadDashboardData = useCallback(async () => {
+    if (!token || !hasProfile) return;
     setBusy(true);
     setError(null);
     try {
-      const [diagnostics, staffList] = await Promise.all([
-        api.diagnostics(token).catch((err) => ({ error: err.message })),
-        api.staff(token).catch((err) => ({ error: err.message })),
-      ]);
-      setReport(diagnostics);
-      setStaff(staffList);
+      const tasks = [];
+      if (isOwner) {
+        tasks.push(
+          api.diagnostics(token).catch((err) => ({ error: err.message })),
+          api.staff(token).catch((err) => ({ error: err.message })),
+        );
+      } else {
+        tasks.push(Promise.resolve(null), Promise.resolve(null));
+      }
+
+      if (isLinked) {
+        tasks.push(
+          api.reportSummary(token).catch(() => null),
+          api.alerts(token).catch(() => null),
+        );
+      } else {
+        tasks.push(Promise.resolve(null), Promise.resolve(null));
+      }
+
+      const [diagnostics, staffList, summaryData, alertsData] = await Promise.all(tasks);
+      if (isOwner) {
+        setReport(diagnostics);
+        setStaff(staffList);
+      }
+      setSummary(summaryData?.summary ?? null);
+      setAlertsList(Array.isArray(alertsData?.alerts) ? alertsData.alerts : []);
+      setAlertCounts(alertsData?.counts ? { total: alertsData.total, ...alertsData.counts } : null);
     } finally {
       setBusy(false);
     }
-  }, [token, isOwner]);
+  }, [token, hasProfile, isOwner, isLinked]);
 
   useEffect(() => {
-    loadOwnerData();
-  }, [loadOwnerData]);
+    loadDashboardData();
+  }, [loadDashboardData]);
+
+  useEffect(() => {
+    if (!token || !hasProfile || !isLinked) return undefined;
+    const timer = setInterval(loadDashboardData, 60_000);
+    const onFocus = () => loadDashboardData();
+    window.addEventListener('focus', onFocus);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener('focus', onFocus);
+    };
+  }, [token, hasProfile, isLinked, loadDashboardData]);
+
+  async function handleStaffUpdate(memberId, payload, successMessage) {
+    if (!token || !memberId) return;
+    setUpdatingId(memberId);
+    setError(null);
+    setNotice(null);
+    try {
+      await api.updateStaff(token, memberId, payload);
+      setNotice(successMessage);
+      await loadDashboardData();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setUpdatingId(null);
+    }
+  }
 
   if (meError) {
     return (
@@ -67,6 +122,15 @@ export default function Dashboard() {
 
   return (
     <div className="grid">
+      {isLinked && (
+        <ExpiryAlertsPanel
+          summary={summary}
+          alerts={alertsList}
+          loading={busy}
+          onRefresh={loadDashboardData}
+        />
+      )}
+
       <section className="grid grid-2">
         <div className="card">
           <div className="card-head">
@@ -91,22 +155,39 @@ export default function Dashboard() {
               )}
             </dd>
           </dl>
-          {me.role !== 'owner' && (
+          {me.role !== 'owner' && !me.pharmacyId && (
             <div className="alert alert-warn" style={{ marginTop: '0.9rem', marginBottom: 0 }}>
-              حسابك غير مرتبط بصيدلية بعد. مالك الصيدلية هو من يربطك من صفحة الموظفين.
+              حسابك غير مرتبط بصيدلية بعد. اطلب من مالك الصيدلية ربط حسابك من جدول الموظفين في لوحة التحكم.
             </div>
           )}
         </div>
 
         <div className="card">
           <div className="card-head">
-            <h2 className="section-title">حالة قاعدة البيانات</h2>
-            <button className="btn btn-soft" type="button" onClick={loadOwnerData} disabled={busy || !isOwner}>
-              {busy ? 'جارٍ الفحص…' : 'تحديث'}
+            <h2 className="section-title">{isOwner ? 'حالة قاعدة البيانات' : 'ملخص الصيدلية'}</h2>
+            <button className="btn btn-soft" type="button" onClick={loadDashboardData} disabled={busy}>
+              {busy ? 'جارٍ التحديث…' : 'تحديث'}
             </button>
           </div>
-          {!isOwner && (
-            <p className="muted small">التشخيص الكامل متاح لمالك الصيدلية فقط لأنه يكشف بنية المخطط.</p>
+          {!isOwner && !isLinked && (
+            <p className="muted small">ستظهر إحصائيات المخزون والتنبيهات فور ربط حسابك بالصيدلية.</p>
+          )}
+          {!isOwner && isLinked && summary && (
+            <div className="grid grid-3">
+              <div className="stat">
+                <span>الأدوية</span>
+                <strong>{summary.counts?.medicines ?? 0}</strong>
+              </div>
+              <div className="stat">
+                <span>وحدات صالحة</span>
+                <strong>{summary.units?.sellable ?? 0}</strong>
+              </div>
+              <div className="stat">
+                <span>التنبيهات</span>
+                <strong>{alertCounts?.total ?? 0}</strong>
+                <span className="hint">حرجة: {alertCounts?.high ?? 0}</span>
+              </div>
+            </div>
           )}
           {isOwner && report?.error && <div className="alert alert-error">{report.error}</div>}
           {isOwner && connection && (
@@ -148,14 +229,60 @@ export default function Dashboard() {
         </div>
       </section>
 
+      {isLinked && (
+        <section className="card">
+          <div className="card-head">
+            <h2 className="section-title">العمليات السريعة والمؤشرات الحية</h2>
+            <span className="badge">متصل</span>
+          </div>
+          {summary && (
+            <div className="grid grid-3" style={{ marginBottom: '1rem' }}>
+              <div className="stat">
+                <span>الأصناف المسجّلة</span>
+                <strong>{summary.counts?.medicines ?? 0}</strong>
+                <span className="hint">الدفعات: {summary.counts?.batches ?? 0}</span>
+              </div>
+              <div className="stat">
+                <span>الوحدات القابلة للصرف</span>
+                <strong>{summary.units?.sellable ?? 0}</strong>
+                <span className="hint">منتهية: {summary.units?.expired ?? 0}</span>
+              </div>
+              <div className="stat">
+                <span>التنبيهات النشطة</span>
+                <strong>{alertCounts?.total ?? 0}</strong>
+                <span className="hint">حرجة: {alertCounts?.high ?? 0}</span>
+              </div>
+            </div>
+          )}
+          <div className="btn-row" style={{ marginTop: 0 }}>
+            <Link className="btn btn-primary" to="/app/inventory">
+              إدارة المخزون والدفعات
+            </Link>
+            <Link className="btn btn-soft" to="/app/movements">
+              حركات المخزون (FEFO)
+            </Link>
+            <Link className="btn btn-soft" to="/app/alerts">
+              التنبيهات ({alertCounts?.total ?? 0})
+            </Link>
+            <Link className="btn btn-ghost" to="/app/reports">
+              التقارير
+            </Link>
+            <Link className="btn btn-ghost" to="/app/agent">
+              الوكلاء الذكيون
+            </Link>
+          </div>
+        </section>
+      )}
+
       {isOwner && (
         <section className="card">
           <div className="card-head">
-            <h2 className="section-title">الموظفون</h2>
+            <h2 className="section-title">إدارة الموظفين</h2>
             <span className="badge badge-muted">{staff?.staff?.length ?? 0} حساب</span>
           </div>
           {staff?.error && <div className="alert alert-error">{staff.error}</div>}
           {error && <div className="alert alert-error">{error}</div>}
+          {notice && <div className="alert alert-success">{notice}</div>}
           {staff?.staff?.length ? (
             <div className="table-wrap">
               <table>
@@ -164,7 +291,8 @@ export default function Dashboard() {
                     <th>الاسم</th>
                     <th>البريد</th>
                     <th>الدور</th>
-                    <th>الصيدلية</th>
+                    <th>الحالة</th>
+                    <th>إجراءات</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -172,8 +300,71 @@ export default function Dashboard() {
                     <tr key={member.id}>
                       <td>{member.fullName || '—'}</td>
                       <td dir="ltr">{member.email || '—'}</td>
-                      <td>{member.roleLabel}</td>
-                      <td dir="ltr">{member.pharmacyId || '—'}</td>
+                      <td>
+                        {member.isSelf || member.role === 'owner' ? (
+                          member.roleLabel
+                        ) : (
+                          <select
+                            className="select"
+                            style={{ minWidth: '140px', padding: '0.35rem 0.5rem' }}
+                            value={member.role ?? 'pharmacist'}
+                            disabled={updatingId === member.id}
+                            onChange={(event) =>
+                              handleStaffUpdate(
+                                member.id,
+                                { role: event.target.value },
+                                `تم تحديث دور ${member.fullName || member.email} إلى ${roleLabel(event.target.value)}.`,
+                              )
+                            }
+                          >
+                            {SELF_REGISTER_ROLES.map((opt) => (
+                              <option key={opt.value} value={opt.value}>
+                                {opt.label}
+                              </option>
+                            ))}
+                          </select>
+                        )}
+                      </td>
+                      <td>
+                        <span className={member.linked ? 'badge' : 'badge badge-warn'}>
+                          {member.linked ? 'مرتبط بالصيدلية' : 'بانتظار الربط'}
+                        </span>
+                      </td>
+                      <td>
+                        {member.isSelf || member.role === 'owner' ? (
+                          <span className="muted small">—</span>
+                        ) : !member.linked ? (
+                          <button
+                            className="btn btn-primary btn-sm"
+                            type="button"
+                            disabled={updatingId === member.id}
+                            onClick={() =>
+                              handleStaffUpdate(
+                                member.id,
+                                { linkToMyPharmacy: true },
+                                `تم ربط ${member.fullName || member.email} بصيدليتك.`,
+                              )
+                            }
+                          >
+                            {updatingId === member.id ? 'جارٍ الربط…' : 'ربط بصيدليتي'}
+                          </button>
+                        ) : (
+                          <button
+                            className="btn btn-ghost btn-sm"
+                            type="button"
+                            disabled={updatingId === member.id}
+                            onClick={() =>
+                              handleStaffUpdate(
+                                member.id,
+                                { unlinkFromPharmacy: true },
+                                `تم فك ربط ${member.fullName || member.email} من الصيدلية.`,
+                              )
+                            }
+                          >
+                            فك الربط
+                          </button>
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -184,20 +375,6 @@ export default function Dashboard() {
           )}
         </section>
       )}
-
-      <section className="card locked">
-        <h2 className="section-title">وظائف مؤجلة حتى تأكيد الربط</h2>
-        <p className="muted small">
-          المخزون والوكيل الذكي لم يُبنَ بعد بشكل مقصود. الخطوة التالية بعد تأكيد الربط والصلاحيات: دفعات المخزون،
-          حركات الصيد، التنبيهات، ثم الوكيل الذكي فوق الجداول نفسها.
-        </p>
-        <div className="pill-list">
-          <span className="pill">inventory_batches</span>
-          <span className="pill">stock_movements</span>
-          <span className="pill">inventory_alerts</span>
-          <span className="pill">agent_runs</span>
-        </div>
-      </section>
     </div>
   );
 }

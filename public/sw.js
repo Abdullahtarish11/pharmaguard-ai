@@ -3,8 +3,8 @@
  * قواعد صارمة: لا تُخزَّن أي استجابة من /api إطلاقًا (بيانات صيدلية حسّاسة)،
  * ولا تُخزَّن صفحات المستخدم بعد تسجيل الدخول.
  */
-const CACHE = 'pharmaguard-shell-v1';
-const SHELL = ['/', '/manifest.webmanifest', '/icons/icon-192.png', '/icons/icon-512.png'];
+const CACHE = 'pharmaguard-shell-v2';
+const SHELL = ['/', '/manifest.webmanifest', '/icons/icon.svg', '/icons/icon-192.png', '/icons/icon-512.png'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(

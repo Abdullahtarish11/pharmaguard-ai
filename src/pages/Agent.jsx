@@ -3,12 +3,72 @@ import { api } from '../api.js';
 import { useApp } from '../context.jsx';
 import { formatDate } from '../labels.js';
 
-const SUGGESTIONS = [
-  'ما الأصناف التي تحت حد إعادة الطلب؟',
-  'أي دفعات تنتهي صلاحيتها قريبًا؟',
-  'ما إجمالي الوحدات في المخزون؟',
-  'لخّص حركات المخزون الأخيرة',
+const AGENT_GROUPS = [
+  {
+    agent: 'وكيل إدارة المخزون',
+    questions: [
+      'ما الأصناف التي تحت حد إعادة الطلب؟',
+      'ما ترتيب الصرف وفق FEFO؟',
+      'أي دفعات تنتهي صلاحيتها قريبًا؟',
+      'ما إجمالي الوحدات في المخزون؟',
+    ],
+  },
+  {
+    agent: 'وكيل سلامة الأدوية',
+    questions: [
+      'فحص تداخلات المخزون الحالية',
+      'هل يوجد تداخل دوائي مسجل؟',
+    ],
+  },
+  {
+    agent: 'وكيل التحليل والتقارير',
+    questions: [
+      'لخّص حركات المخزون الأخيرة',
+      'أعطني تقريرًا تحليليًا شاملًا للمخزون',
+    ],
+  },
 ];
+
+const FACT_TYPE_LABELS = {
+  interaction: 'تداخل دوائي',
+  out_of_stock: 'نفاد مخزون',
+  low_stock: 'نقص مخزون',
+  expired_batch: 'دفعة منتهية',
+  expiring_soon: 'قرب انتهاء',
+  fefo_batch: 'ترتيب FEFO',
+  fefo_next: 'الأولوية وفق FEFO',
+  movement: 'حركة مخزون',
+  batch: 'دفعة',
+  medicine_total: 'إجمالي صنف',
+  inventory_total: 'إجمالي المخزون',
+  summary: 'ملخص تحليلي',
+};
+
+const FACT_KEY_LABELS = {
+  drugA: 'الدواء أ',
+  drugB: 'الدواء ب',
+  severity: 'الشدة',
+  medicine: 'الدواء',
+  units: 'الوحدات',
+  reorderLevel: 'حد إعادة الطلب',
+  suggestedReorder: 'اقتراح إعادة الطلب',
+  batchNumber: 'رقم الدفعة',
+  expiryDate: 'تاريخ الانتهاء',
+  order: 'الترتيب',
+  quantity: 'الكمية',
+  movementType: 'نوع الحركة',
+  total: 'الإجمالي',
+  sellable: 'الصالح للصرف',
+  medicines: 'الأدوية',
+  batches: 'الدفعات',
+  totalUnits: 'إجمالي الوحدات',
+  sellableUnits: 'الوحدات الصالحة',
+  expiredUnits: 'الوحدات المنتهية',
+  inbound: 'الوارد',
+  outbound: 'الصادر',
+  alerts: 'التنبيهات',
+  highSeverityAlerts: 'تنبيهات حرجة',
+};
 
 export default function Agent() {
   const { session, me } = useApp();
@@ -16,6 +76,7 @@ export default function Agent() {
   const [question, setQuestion] = useState('');
   const [result, setResult] = useState(null);
   const [runs, setRuns] = useState(null);
+  const [selectedRun, setSelectedRun] = useState(null);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
 
@@ -57,13 +118,12 @@ export default function Agent() {
       <section className="card">
         <div className="card-head">
           <div>
-            <h1 className="section-title">الوكيل الذكي</h1>
+            <h1 className="section-title">الوكلاء الذكيون الثلاثة</h1>
             <p className="muted small" style={{ margin: 0 }}>
-              يجيب من بيانات مخزونك فقط. لا يخترع أسماء أدوية ولا جرعات ولا تداخلات غير موجودة في جدول
-              drug_interactions.
+              إجابات مبنية حصريًا على جداولك الفعلية (إدارة المخزون وFEFO، سلامة الأدوية، التحليل والتقارير) دون اختلاق أو تشخيص طبي.
             </p>
           </div>
-          <span className="badge badge-muted">بيانات فعلية</span>
+          <span className="badge">بيانات فعلية</span>
         </div>
 
         {error && <div className="alert alert-error">{error}</div>}
@@ -83,13 +143,13 @@ export default function Agent() {
               value={question}
               maxLength={500}
               onChange={(event) => setQuestion(event.target.value)}
-              placeholder="مثال: أي دفعات تنتهي هذا الشهر؟"
+              placeholder="مثال: ما ترتيب الصرف وفق FEFO؟ أو هل يوجد تداخل بين دوائين؟"
               disabled={!canRun || busy}
             />
           </div>
           <div className="btn-row">
             <button className="btn btn-primary" type="submit" disabled={!canRun || busy || question.trim().length < 2}>
-              {busy ? 'جارٍ التحليل…' : 'اسأل'}
+              {busy ? 'جارٍ التحليل…' : 'اسأل الوكيل'}
             </button>
           </div>
         </form>
@@ -100,17 +160,25 @@ export default function Agent() {
           </div>
         )}
 
-        <div className="pill-list" style={{ marginTop: '0.9rem' }}>
-          {SUGGESTIONS.map((suggestion) => (
-            <button
-              key={suggestion}
-              className="pill"
-              type="button"
-              onClick={() => ask(suggestion)}
-              disabled={!canRun || busy}
-            >
-              {suggestion}
-            </button>
+        <div className="grid grid-3" style={{ marginTop: '1rem' }}>
+          {AGENT_GROUPS.map((group) => (
+            <div key={group.agent} className="stat" style={{ gap: '0.45rem' }}>
+              <span style={{ color: 'var(--accent)', fontWeight: 600 }}>{group.agent}</span>
+              <div className="pill-list">
+                {group.questions.map((suggestion) => (
+                  <button
+                    key={suggestion}
+                    className="pill"
+                    type="button"
+                    style={{ cursor: canRun && !busy ? 'pointer' : 'not-allowed', color: 'var(--text)' }}
+                    onClick={() => ask(suggestion)}
+                    disabled={!canRun || busy}
+                  >
+                    {suggestion}
+                  </button>
+                ))}
+              </div>
+            </div>
           ))}
         </div>
       </section>
@@ -119,11 +187,12 @@ export default function Agent() {
         <section className="card">
           <div className="card-head">
             <h2 className="section-title">الإجابة</h2>
-            <span className="badge">{result.intent ?? 'general'}</span>
+            <div className="btn-row" style={{ marginTop: 0 }}>
+              {result.agent?.label && <span className="badge">{result.agent.label}</span>}
+              <span className="badge badge-muted">{result.intent ?? 'general'}</span>
+            </div>
           </div>
-          <pre className="code" style={{ whiteSpace: 'pre-wrap', margin: 0 }}>
-            {result.answer}
-          </pre>
+          <pre className="agent-answer">{result.answer}</pre>
           {Array.isArray(result.facts) && result.facts.length > 0 && (
             <>
               <h3 className="section-title" style={{ marginTop: '1rem', fontSize: '1rem' }}>
@@ -140,11 +209,11 @@ export default function Agent() {
                   <tbody>
                     {result.facts.map((fact, index) => (
                       <tr key={`${fact.type}-${index}`}>
-                        <td>{fact.type}</td>
+                        <td>{FACT_TYPE_LABELS[fact.type] ?? fact.type}</td>
                         <td dir="auto">
                           {Object.entries(fact)
                             .filter(([key]) => key !== 'type')
-                            .map(([key, value]) => `${key}: ${value ?? '—'}`)
+                            .map(([key, value]) => `${FACT_KEY_LABELS[key] ?? key}: ${value ?? '—'}`)
                             .join(' • ')}
                         </td>
                       </tr>
@@ -164,7 +233,7 @@ export default function Agent() {
 
       <section className="card">
         <div className="card-head">
-          <h2 className="section-title">آخر الأسئلة</h2>
+          <h2 className="section-title">سجل المحادثات السابقة</h2>
           <span className="badge badge-muted">{runs?.runs?.length ?? 0}</span>
         </div>
         {runs?.error && <div className="alert alert-warn">{runs.error}</div>}
@@ -179,6 +248,7 @@ export default function Agent() {
                   <th>السؤال</th>
                   <th>الحالة</th>
                   <th>التاريخ</th>
+                  <th />
                 </tr>
               </thead>
               <tbody>
@@ -187,8 +257,21 @@ export default function Agent() {
                     <td dir="auto">
                       {typeof run.input === 'string' ? run.input : run.input?.question ?? '—'}
                     </td>
-                    <td>{run.status ?? '—'}</td>
+                    <td>{run.status === 'completed' ? 'مكتمل' : run.status ?? '—'}</td>
                     <td>{formatDate(run.createdAt)}</td>
+                    <td>
+                      {run.answer ? (
+                        <button
+                          className="btn btn-soft btn-sm"
+                          type="button"
+                          onClick={() => setSelectedRun(run)}
+                        >
+                          عرض الإجابة
+                        </button>
+                      ) : (
+                        <span className="muted small">—</span>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -198,6 +281,27 @@ export default function Agent() {
           <p className="muted small">لا توجد أسئلة مسجّلة بعد.</p>
         )}
       </section>
+
+      {selectedRun && (
+        <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="تفاصيل المحادثة السابقة">
+          <div className="modal-card">
+            <h3 className="section-title">سؤال سابق</h3>
+            <p className="small">
+              {typeof selectedRun.input === 'string' ? selectedRun.input : selectedRun.input?.question ?? '—'}
+            </p>
+            <pre className="agent-answer">
+              {typeof selectedRun.answer === 'string'
+                ? selectedRun.answer
+                : selectedRun.answer?.answer ?? JSON.stringify(selectedRun.answer, null, 2)}
+            </pre>
+            <div className="btn-row">
+              <button className="btn btn-primary" type="button" onClick={() => setSelectedRun(null)}>
+                إغلاق
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

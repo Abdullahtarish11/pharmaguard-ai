@@ -60,7 +60,7 @@ export function canManageStaff(role) {
 
 export function canWriteInventory(role) {
   const r = normalizeRole(role);
-  return r === ROLE.OWNER || r === ROLE.INVENTORY;
+  return r === ROLE.OWNER || r === ROLE.PHARMACIST || r === ROLE.INVENTORY;
 }
 
 export function canReadClinical(role) {
@@ -70,7 +70,7 @@ export function canReadClinical(role) {
 
 export function canRunAgent(role) {
   const r = normalizeRole(role);
-  return r === ROLE.OWNER || r === ROLE.PHARMACIST;
+  return r === ROLE.OWNER || r === ROLE.PHARMACIST || r === ROLE.INVENTORY;
 }
 
 /**

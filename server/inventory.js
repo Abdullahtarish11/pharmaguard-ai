@@ -31,6 +31,7 @@ export const COLUMN_CANDIDATES = Object.freeze({
     receivedAt: ['received_at', 'received_date', 'created_at'],
     costPrice: ['cost_price', 'purchase_price', 'unit_cost', 'cost'],
     sellingPrice: ['selling_price', 'sale_price', 'price', 'unit_price'],
+    isActive: ['is_active', 'active'],
     pharmacy: ['pharmacy_id', 'pharmacy', 'store_id', 'pharmacies_id'],
   },
   stock_movements: {
@@ -180,6 +181,7 @@ export function shapeBatch(row, cols, now = new Date()) {
     costPrice: cols.costPrice ? num(row[cols.costPrice], 0) : null,
     sellingPrice: cols.sellingPrice ? num(row[cols.sellingPrice], 0) : null,
     receivedAt: cols.receivedAt ? row[cols.receivedAt] ?? null : null,
+    isActive: cols.isActive ? row[cols.isActive] !== false : true,
     pharmacyId: cols.pharmacy && row[cols.pharmacy] != null ? String(row[cols.pharmacy]) : null,
   };
 }
@@ -199,12 +201,102 @@ export function shapeMovement(row, cols) {
 
 export const MOVEMENT_TYPES = Object.freeze(['receive', 'dispense', 'adjust', 'write_off', 'return']);
 
+export const MOVEMENT_TYPE_LABELS = Object.freeze({
+  receive: 'استلام',
+  dispense: 'صرف',
+  adjust: 'تعديل',
+  write_off: 'إتلاف',
+  return: 'إرجاع',
+  unknown: 'غير محدد',
+});
+
 /** أنواع الحركات التي تزيد الكمية (باقيها ينقصها). */
 export const INCREASING_MOVEMENTS = Object.freeze(['receive', 'return', 'adjust_in', 'in']);
+
+/** أنواع الحركات التي تنقص الكمية. */
+export const DECREASING_MOVEMENTS = Object.freeze(['dispense', 'adjust', 'write_off', 'out', 'waste']);
 
 export function movementDelta(type, quantity) {
   const qty = Math.abs(num(quantity, 0));
   return INCREASING_MOVEMENTS.includes(String(type)) ? qty : -qty;
+}
+
+function compareFefoBatch(a, b) {
+  if (a.expiryDate && !b.expiryDate) return -1;
+  if (!a.expiryDate && b.expiryDate) return 1;
+  if (a.expiryDate && b.expiryDate && a.expiryDate !== b.expiryDate) {
+    return a.expiryDate < b.expiryDate ? -1 : 1;
+  }
+  const recA = a.receivedAt ? String(a.receivedAt) : '';
+  const recB = b.receivedAt ? String(b.receivedAt) : '';
+  if (recA && recB && recA !== recB) return recA < recB ? -1 : 1;
+  return String(a.id ?? '').localeCompare(String(b.id ?? ''));
+}
+
+/** يرتب الدفعات الصالحة للصرف (غير المنتهية وذات كمية > 0) حسب الأقرب انتهاءً (FEFO). */
+export function sortBatchesFefo(batches = [], now = new Date()) {
+  return batches
+    .filter((batch) => {
+      if (!batch || num(batch.quantity, 0) <= 0) return false;
+      const bucket = classifyExpiry(batch.expiryDate, now).bucket;
+      return bucket !== 'expired';
+    })
+    .slice()
+    .sort(compareFefoBatch);
+}
+
+/** يخطط صرف كمية محددة من الدفعات الصالحة بترتيب FEFO دون تعديل المصفوفة الأصلية. */
+export function planFefoDispense(batches = [], requestedQuantity, now = new Date()) {
+  const requested = num(requestedQuantity, 0);
+  if (!Number.isInteger(requested) || requested <= 0) {
+    return { ok: false, reason: 'invalid_quantity', available: 0, requested, allocations: [] };
+  }
+
+  const eligible = sortBatchesFefo(batches, now);
+  const available = eligible.reduce((sum, batch) => sum + num(batch.quantity, 0), 0);
+  if (available < requested) {
+    return { ok: false, reason: 'insufficient_quantity', available, requested, allocations: [] };
+  }
+
+  let remaining = requested;
+  const allocations = [];
+  for (const batch of eligible) {
+    if (remaining <= 0) break;
+    const current = num(batch.quantity, 0);
+    const take = Math.min(remaining, current);
+    allocations.push({
+      batchId: batch.id,
+      batchNumber: batch.batchNumber ?? null,
+      medicineId: batch.medicineId ?? null,
+      expiryDate: batch.expiryDate ?? null,
+      previousQuantity: current,
+      take,
+      newQuantity: current - take,
+    });
+    remaining -= take;
+  }
+
+  return { ok: true, available, requested, allocations };
+}
+
+/** يرجع أول دفعة صالحة للصرف تنتهي قبل الدفعة المستهدفة إن وُجدت (لإنفاذ FEFO). */
+export function findFefoBlockingBatch(batches = [], targetBatch, now = new Date()) {
+  if (!targetBatch?.id) return null;
+  const targetMed = targetBatch.medicineId != null ? String(targetBatch.medicineId) : null;
+  const sameMedicine = targetMed
+    ? batches.filter((batch) => String(batch.medicineId ?? '') === targetMed)
+    : batches;
+  const eligible = sortBatchesFefo(sameMedicine, now);
+  if (eligible.length === 0) return null;
+
+  const earliest = eligible[0];
+  if (String(earliest.id) === String(targetBatch.id)) return null;
+
+  if (earliest.expiryDate && !targetBatch.expiryDate) return earliest;
+  if (earliest.expiryDate && targetBatch.expiryDate && earliest.expiryDate < targetBatch.expiryDate) {
+    return earliest;
+  }
+  return null;
 }
 
 /**
@@ -248,6 +340,9 @@ export function aggregateStock(batches, now = new Date()) {
  */
 export function computeAlerts({ medicines = [], batches = [], now = new Date() } = {}) {
   const stock = aggregateStock(batches, now);
+  const medicineNames = new Map(
+    medicines.filter((m) => m?.id != null).map((m) => [String(m.id), m.name ?? null]),
+  );
   const alerts = [];
 
   for (const medicine of medicines) {
@@ -286,16 +381,19 @@ export function computeAlerts({ medicines = [], batches = [], now = new Date() }
   }
 
   for (const batch of batches) {
+    const medName = batch.medicineId ? medicineNames.get(String(batch.medicineId)) ?? null : null;
     if (batch.expiryBucket === 'expired' && batch.quantity > 0) {
       alerts.push({
         key: `expired:${batch.id}`,
         type: 'expired_batch',
         severity: 'high',
         medicineId: batch.medicineId,
+        medicineName: medName,
         batchId: batch.id,
         batchNumber: batch.batchNumber,
         units: batch.quantity,
         expiryDate: batch.expiryDate,
+        daysToExpiry: batch.daysToExpiry,
         message: `الدفعة ${batch.batchNumber ?? batch.id} منتهية الصلاحية (${batch.expiryDate}) وبها ${batch.quantity} وحدة يجب سحبها.`,
       });
     } else if (batch.expiryBucket === 'critical' && batch.quantity > 0) {
@@ -304,6 +402,7 @@ export function computeAlerts({ medicines = [], batches = [], now = new Date() }
         type: 'expiring_soon',
         severity: 'medium',
         medicineId: batch.medicineId,
+        medicineName: medName,
         batchId: batch.id,
         batchNumber: batch.batchNumber,
         units: batch.quantity,
@@ -354,6 +453,10 @@ export function buildInventorySummary({ medicines = [], batches = [], movements 
     .filter((row) => row.reorderLevel > 0 && row.units <= row.reorderLevel)
     .sort((a, b) => a.units - b.units);
 
+  const medicineNames = new Map(
+    medicines.filter((m) => m?.id != null).map((m) => [String(m.id), m.name ?? null]),
+  );
+
   const expiring = batches
     .filter((batch) => batch.quantity > 0 && (batch.expiryBucket === 'critical' || batch.expiryBucket === 'warning'))
     .sort((a, b) => String(a.expiryDate).localeCompare(String(b.expiryDate)))
@@ -362,6 +465,7 @@ export function buildInventorySummary({ medicines = [], batches = [], movements 
       batchId: batch.id,
       batchNumber: batch.batchNumber,
       medicineId: batch.medicineId,
+      medicineName: batch.medicineId ? medicineNames.get(String(batch.medicineId)) ?? null : null,
       quantity: batch.quantity,
       expiryDate: batch.expiryDate,
       daysToExpiry: batch.daysToExpiry,
@@ -382,6 +486,21 @@ export function buildInventorySummary({ medicines = [], batches = [], movements 
     expiring,
     movementsByType,
   };
+}
+
+/** يتحقق من أن المستخدم مرتبط بصيدلية عندما يحتوي الجدول على عمود صيدلية. */
+export function requirePharmacy(columns, tableKey, profile) {
+  const pharmacyColumn = columns?.[tableKey]?.pharmacy;
+  const pharmacyId = pharmacyIdOf(profile);
+  if (pharmacyColumn && !pharmacyId) {
+    return {
+      ok: false,
+      status: 403,
+      code: 'pharmacy_not_linked',
+      message: 'حسابك غير مرتبط بصيدلية بعد. اطلب من مالك الصيدلية ربط حسابك أولًا.',
+    };
+  }
+  return { ok: true, pharmacyId };
 }
 
 /** يحصر استعلامًا في صيدلية المستخدم عندما يكون عمود الصيدلية معروفًا. */

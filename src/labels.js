@@ -5,7 +5,7 @@ export const ROLE_LABELS = {
 };
 
 export const SELF_REGISTER_ROLES = [
-  { value: 'pharmacist', label: 'صيدلي', hint: 'وصف دوائي، تفاعلات، وصفات' },
+  { value: 'pharmacist', label: 'صيدلي', hint: 'إدارة الأدوية والمخزون، FEFO، التداخلات والتقارير' },
   { value: 'inventory_manager', label: 'مسؤول المخزون', hint: 'دفعات، حركات، تنبيهات نقص' },
 ];
 

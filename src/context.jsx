@@ -26,9 +26,11 @@ export function AppProvider({ children }) {
   const [me, setMe] = useState(null);
   const [meError, setMeError] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [passwordRecovery, setPasswordRecovery] = useState(false);
 
   useEffect(() => {
     let alive = true;
+    let subscription = null;
     (async () => {
       try {
         const cfg = await api.config();
@@ -38,9 +40,15 @@ export function AppProvider({ children }) {
         if (supabase) {
           const { data } = await supabase.auth.getSession();
           if (alive) setSession(data?.session ?? null);
-          supabase.auth.onAuthStateChange((_event, nextSession) => {
+          const listener = supabase.auth.onAuthStateChange((event, nextSession) => {
             setSession(nextSession ?? null);
+            if (event === 'PASSWORD_RECOVERY') {
+              setPasswordRecovery(true);
+            } else if (event === 'SIGNED_OUT') {
+              setPasswordRecovery(false);
+            }
           });
+          subscription = listener?.data?.subscription ?? null;
         }
       } catch (error) {
         if (alive) setConfigError(error.message);
@@ -50,6 +58,7 @@ export function AppProvider({ children }) {
     })();
     return () => {
       alive = false;
+      subscription?.unsubscribe?.();
     };
   }, []);
 
@@ -83,7 +92,10 @@ export function AppProvider({ children }) {
     if (supabase) await supabase.auth.signOut();
     setSession(null);
     setMe(null);
+    setPasswordRecovery(false);
   }, [config]);
+
+  const clearPasswordRecovery = useCallback(() => setPasswordRecovery(false), []);
 
   const value = useMemo(
     () => ({
@@ -93,11 +105,13 @@ export function AppProvider({ children }) {
       me,
       meError,
       loading,
+      passwordRecovery,
+      clearPasswordRecovery,
       refreshMe,
       signOut,
       supabase: getSupabase(config),
     }),
-    [config, configError, session, me, meError, loading, refreshMe, signOut],
+    [config, configError, session, me, meError, loading, passwordRecovery, clearPasswordRecovery, refreshMe, signOut],
   );
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

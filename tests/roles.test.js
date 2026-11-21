@@ -36,21 +36,22 @@ test('قراءة الدور من أي عمود محتمل في profiles', () => 
   assert.equal(readRoleFromProfile(null), null);
 });
 
-test('صلاحيات الأدوار مفصولة كما هو مطلوب', () => {
+test('صلاحيات الأدوار مطابقة لتفويض الصيدلي وعزل إدارة الموظفين', () => {
   assert.equal(canManageStaff('owner'), true);
   assert.equal(canManageStaff('pharmacist'), false);
   assert.equal(canManageStaff('inventory_manager'), false);
 
   assert.equal(canWriteInventory('owner'), true);
+  assert.equal(canWriteInventory('pharmacist'), true);
   assert.equal(canWriteInventory('inventory_manager'), true);
-  assert.equal(canWriteInventory('pharmacist'), false);
 
   assert.equal(canReadClinical('owner'), true);
   assert.equal(canReadClinical('pharmacist'), true);
   assert.equal(canReadClinical('inventory_manager'), false);
 
+  assert.equal(canRunAgent('owner'), true);
   assert.equal(canRunAgent('pharmacist'), true);
-  assert.equal(canRunAgent('inventory_manager'), false);
+  assert.equal(canRunAgent('inventory_manager'), true);
 });
 
 test('الأدوار غير المعروفة تُرفض ولا تُخمَّن', () => {

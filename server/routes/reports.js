@@ -12,6 +12,8 @@ import {
   computeAlerts,
   payloadFor,
   scopeToPharmacy,
+  requirePharmacy,
+  MOVEMENT_TYPE_LABELS,
 } from '../inventory.js';
 
 const router = express.Router();
@@ -32,9 +34,10 @@ async function loadData(admin, columns, profile) {
   if (columns.movements.createdAt) moveQuery = moveQuery.order(columns.movements.createdAt, { ascending: false });
   reads.movements = await moveQuery;
 
+  const now = new Date();
   return {
     medicines: reads.medicines.error ? [] : (reads.medicines.data ?? []).map((row) => shapeMedicine(row, columns.medicines)),
-    batches: reads.batches.error ? [] : (reads.batches.data ?? []).map((row) => shapeBatch(row, columns.batches)),
+    batches: reads.batches.error ? [] : (reads.batches.data ?? []).map((row) => shapeBatch(row, columns.batches, now)),
     movements: reads.movements.error ? [] : (reads.movements.data ?? []).map((row) => shapeMovement(row, columns.movements)),
     errors: {
       medicines: reads.medicines.error?.message ?? null,
@@ -54,12 +57,16 @@ router.get(
     if (!admin) return httpError(res, 503, 'supabase_not_configured', 'لم تُضف مفاتيح Supabase بعد.');
 
     const columns = await inventoryColumns();
+    const scope = requirePharmacy(columns, 'medicines', req.auth.profile);
+    if (!scope.ok) return httpError(res, scope.status, scope.code, scope.message);
+
     const data = await loadData(admin, columns, req.auth.profile);
     const summary = buildInventorySummary(data);
     const alerts = computeAlerts(data);
 
     return res.json({
       summary,
+      typeLabels: MOVEMENT_TYPE_LABELS,
       alertCounts: {
         total: alerts.length,
         high: alerts.filter((alert) => alert.severity === 'high').length,
@@ -75,12 +82,15 @@ router.get(
 router.post(
   '/',
   requireUser,
-  requireRole(ROLE.OWNER, ROLE.PHARMACIST, ROLE.INVENTORY),
+  requireRole(ROLE.OWNER, ROLE.PHARMACIST),
   asyncHandler(async (req, res) => {
     const admin = getAdmin();
     if (!admin) return httpError(res, 503, 'supabase_not_configured', 'لم تُضف مفاتيح Supabase بعد.');
 
     const columns = await inventoryColumns();
+    const scope = requirePharmacy(columns, 'reports', req.auth.profile);
+    if (!scope.ok) return httpError(res, scope.status, scope.code, scope.message);
+
     const reportCols = columns.reports;
     if (!reportCols.id) {
       return httpError(res, 400, 'reports_unavailable', 'جدول reports غير متاح للحفظ.');
@@ -102,8 +112,8 @@ router.post(
       };
     }
     if (reportCols.user) desired[reportCols.user] = req.auth.user.id;
-    if (reportCols.pharmacy && req.auth.publicProfile?.pharmacyId) {
-      desired[reportCols.pharmacy] = req.auth.publicProfile.pharmacyId;
+    if (reportCols.pharmacy && scope.pharmacyId) {
+      desired[reportCols.pharmacy] = scope.pharmacyId;
     }
 
     const payload = payloadFor(columns, 'reports', desired);
@@ -124,6 +134,9 @@ router.get(
     if (!admin) return httpError(res, 503, 'supabase_not_configured', 'لم تُضف مفاتيح Supabase بعد.');
 
     const columns = await inventoryColumns();
+    const scope = requirePharmacy(columns, 'reports', req.auth.profile);
+    if (!scope.ok) return httpError(res, scope.status, scope.code, scope.message);
+
     const reportCols = columns.reports;
     if (!reportCols.id) {
       return res.json({ reports: [], available: false });

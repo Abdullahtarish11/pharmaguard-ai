@@ -97,27 +97,48 @@ test('إنشاء المالك مرفوض بدون إعدادات سيرفر', as
 });
 
 test('المسارات المحمية ترفض الطلبات بدون جلسة', async () => {
-  for (const [method, route] of [
+  for (const [method, route, payload] of [
     ['GET', '/api/auth/me'],
     ['GET', '/api/diagnostics'],
     ['GET', '/api/staff'],
-    ['POST', '/api/auth/profile'],
+    ['POST', '/api/auth/profile', { fullName: 'x', role: 'owner' }],
+    ['PATCH', '/api/staff/u1', { linkToMyPharmacy: true }],
+    ['GET', '/api/medicines'],
+    ['POST', '/api/medicines', { name: 'test' }],
+    ['PATCH', '/api/medicines/m1', { name: 'test2' }],
+    ['GET', '/api/batches'],
+    ['POST', '/api/batches', { medicineId: 'm1', quantity: 5 }],
+    ['POST', '/api/batches/b1/movements', { type: 'dispense', quantity: 1 }],
+    ['GET', '/api/movements'],
+    ['POST', '/api/movements', { batchId: 'b1', type: 'dispense', quantity: 1 }],
+    ['GET', '/api/alerts'],
+    ['PATCH', '/api/alerts/a1/resolve'],
+    ['POST', '/api/alerts/resolve-computed', { type: 'low_stock', message: 'test' }],
+    ['GET', '/api/reports'],
+    ['GET', '/api/reports/summary'],
+    ['POST', '/api/reports'],
+    ['POST', '/api/agent/ask', { question: 'ما حالة المخزون؟' }],
+    ['GET', '/api/agent/runs'],
   ]) {
     const response = await fetch(`${BASE}${route}`, {
       method,
       headers: { 'Content-Type': 'application/json' },
-      body: method === 'POST' ? JSON.stringify({ fullName: 'x', role: 'owner' }) : undefined,
+      body: payload ? JSON.stringify(payload) : undefined,
     });
     assert.equal(response.status, 401, `${method} ${route} يجب أن يرفض بدون جلسة`);
   }
 });
 
-test('ملف سياسات RLS متاح ولا يُنشئ جداول', async () => {
+test('ملف سياسات RLS متاح ولا يُنشئ جداول ويطابق صلاحيات الصيدلي', async () => {
   const response = await fetch(`${BASE}/api/setup/sql`);
   assert.equal(response.status, 200);
   const sql = await response.text();
   assert.match(sql, /enable row level security/i);
   assert.match(sql, /create policy/i);
+  assert.match(sql, /\('medicines',\s*'\{owner,pharmacist,inventory_manager\}'/);
+  assert.match(sql, /\('inventory_batches',\s*'\{owner,pharmacist,inventory_manager\}'/);
+  assert.match(sql, /\('stock_movements',\s*'\{owner,pharmacist,inventory_manager\}'.*false\)/);
+  assert.match(sql, /\('inventory_alerts',\s*'\{owner,pharmacist,inventory_manager\}'/);
   assert.equal(/create\s+table/i.test(sql), false, 'ملف السياسات يجب ألا يُنشئ جداول');
   assert.equal(/drop\s+table/i.test(sql), false, 'ملف السياسات يجب ألا يحذف جداول');
   assert.equal(/insert\s+into\s+public\.(medicines|inventory_batches)/i.test(sql), false);

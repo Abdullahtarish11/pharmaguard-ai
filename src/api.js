@@ -47,7 +47,7 @@ export const api = {
     if (!response.ok) throw new Error('تعذر تحميل ملف السياسات.');
     return response.text();
   },
-  medicines: (token) => request('/medicines', { token }),
+  medicines: (token, query = '') => request(`/medicines${query}`, { token }),
   createMedicine: (token, payload) => request('/medicines', { method: 'POST', token, body: payload }),
   updateMedicine: (token, id, payload) => request(`/medicines/${id}`, { method: 'PATCH', token, body: payload }),
   batches: (token, query = '') => request(`/batches${query}`, { token }),
@@ -58,6 +58,7 @@ export const api = {
   createMovement: (token, payload) => request('/movements', { method: 'POST', token, body: payload }),
   alerts: (token) => request('/alerts', { token }),
   resolveAlert: (token, id) => request(`/alerts/${id}/resolve`, { method: 'PATCH', token }),
+  resolveComputedAlert: (token, payload) => request('/alerts/resolve-computed', { method: 'POST', token, body: payload }),
   reportSummary: (token) => request('/reports/summary', { token }),
   saveReport: (token) => request('/reports', { method: 'POST', token }),
   reports: (token) => request('/reports', { token }),
