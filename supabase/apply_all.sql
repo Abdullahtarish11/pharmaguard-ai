@@ -23,6 +23,10 @@
 --      للجميع (v_scope = 'true')؛ صارت تُوقف التنفيذ برسالة واضحة.
 --   4) فحص أولي للجداول والأدوار، وتحقّق من وجود anon قبل revoke.
 --   5) تحذير صريح عند تعذّر تحديد عمود المستخدم في notifications/device_tokens.
+--   6) إسقاط جميع السياسات القديمة من pg_policies على الجداول الـ11 قبل إعادة البناء
+--      لمنع بقاء أي سياسة PERMISSIVE قديمة تتجاوز عزل الصيدليات أو سجل التدقيق.
+--   7) منع حقن pharmacy_id من العميل عند INSERT في profiles، ومنع UPDATE/DELETE
+--      على stock_movements للمستخدمين للحفاظ على سجل التدقيق (append-only).
 --
 -- التشغيل: Supabase → SQL Editor → الصق الملف كاملًا → Run.
 -- آمن للتشغيل أكثر من مرة (idempotent).
@@ -165,7 +169,7 @@ grant execute on function public.pg_pharmacy() to authenticated, service_role;
 -- 1.3 دالة تجاوز الحراسة: service_role أو اتصال إداري مباشر (SQL Editor/psql)
 --     PostgREST الحديث يضبط request.jwt.claims (JSON) فقط، وليس المطالبة المفردة.
 create or replace function public.pg_guard_bypass() returns boolean
-language plpgsql stable
+language plpgsql stable set search_path = public, pg_temp
 as $body$
 declare
   v_claims text := nullif(current_setting('request.jwt.claims', true), '');
@@ -179,7 +183,7 @@ begin
     end;
   end if;
 
-  -- لا مطالبات JWT إطلاقًا: اتصال إداري مباشر (SQL Editor / psql / pg_dump)
+  -- لا مطالبات JWT إطلاقًا: اتصال إداري مباشر (SQL Editor / psql / pg_dump / Auth trigger)
   if v_role is null then
     return v_claims is null;
   end if;
@@ -191,12 +195,15 @@ $body$;
 revoke all on function public.pg_guard_bypass() from public;
 
 -- ---------------------------------------------------------------------------
--- 2) تفعيل RLS على الجداول الـ11 (بدون أي تغيير في بنيتها)
+-- 2) إسقاط السياسات القديمة وتفعيل RLS على الجداول الـ11 (بدون تغيير في البنية)
+--    إسقاط كل سياسات pg_policies الحالية يضمن عدم بقاء أي سياسة PERMISSIVE
+--    قديمة تتجاوز عزل الصيدليات أو قيود الصلاحيات أو حماية stock_movements.
 -- ---------------------------------------------------------------------------
 do $pg$
 declare
-  t text;
-  v_tables text[] := array[
+  t          text;
+  v_pol      record;
+  v_tables   text[] := array[
     'profiles', 'pharmacies', 'medicines', 'inventory_batches', 'stock_movements',
     'inventory_alerts', 'notifications', 'device_tokens', 'drug_interactions',
     'agent_runs', 'reports'
@@ -204,6 +211,15 @@ declare
   v_has_anon boolean := exists (select 1 from pg_roles where rolname = 'anon');
 begin
   foreach t in array v_tables loop
+    for v_pol in
+      select p.policyname
+        from pg_policies p
+       where p.schemaname = 'public'
+         and p.tablename = t
+    loop
+      execute format('drop policy if exists %I on public.%I', v_pol.policyname, t);
+    end loop;
+
     execute format('alter table public.%I enable row level security', t);
     -- الزوار المجهولون لا يملكون أي صلاحية مباشرة على الجداول
     if v_has_anon then
@@ -226,6 +242,7 @@ declare
   v_role_col  text;
   v_own       text;
   v_same      text;
+  v_no_pharm  text;
 begin
   select c.column_name into v_id_col
     from information_schema.columns c
@@ -248,8 +265,10 @@ begin
   v_own := format('(%I)::text = auth.uid()::text', v_id_col);
   if v_pharm_col is null then
     v_same := 'false';
+    v_no_pharm := 'true';
   else
     v_same := format('((%I) is not null and (%I)::text = public.pg_pharmacy())', v_pharm_col, v_pharm_col);
+    v_no_pharm := format('(%I) is null', v_pharm_col);
   end if;
 
   execute 'drop policy if exists pg_profiles_select on public.profiles';
@@ -281,17 +300,18 @@ begin
     execute format($p$
       create policy pg_profiles_insert on public.profiles
       for insert to authenticated
-      with check (%1$s)
-    $p$, v_own);
+      with check ((%1$s) and (%2$s))
+    $p$, v_own, v_no_pharm);
   else
     execute format($p$
       create policy pg_profiles_insert on public.profiles
       for insert to authenticated
       with check (
         (%1$s)
+        and (%3$s)
         and lower(btrim((%2$I)::text)) in ('pharmacist', 'inventory_manager', 'inventory', 'stock_manager', 'inventory-manager')
       )
-    $p$, v_own, v_role_col);
+    $p$, v_own, v_role_col, v_no_pharm);
   end if;
 
   execute 'drop policy if exists pg_profiles_delete on public.profiles';
@@ -391,8 +411,10 @@ create or replace function public.pg_profiles_guard_insert() returns trigger
 language plpgsql security definer set search_path = public, pg_temp
 as $body$
 declare
-  v_role_col text := nullif(TG_ARGV[0], '');
-  v_new_role text;
+  v_role_col  text := nullif(TG_ARGV[0], '');
+  v_pharm_col text := nullif(TG_ARGV[1], '');
+  v_new_role  text;
+  v_new_pharm text;
 begin
   if public.pg_guard_bypass() then
     return new;
@@ -402,6 +424,13 @@ begin
     v_new_role := lower(btrim(coalesce(to_jsonb(new) ->> v_role_col, '')));
     if v_new_role in ('owner', 'pharmacy_owner', 'pharmacy-owner') then
       raise exception 'لا يمكن إنشاء حساب بدور مالك الصيدلية من العميل.' using errcode = '42501';
+    end if;
+  end if;
+
+  if v_pharm_col is not null then
+    v_new_pharm := nullif(btrim(coalesce(to_jsonb(new) ->> v_pharm_col, '')), '');
+    if v_new_pharm is not null then
+      raise exception 'لا يمكن ربط الحساب بصيدلية من العميل عند الإنشاء.' using errcode = '42501';
     end if;
   end if;
 
@@ -435,8 +464,8 @@ begin
   execute 'drop trigger if exists pg_profiles_guard_insert_trg on public.profiles';
   execute format(
     'create trigger pg_profiles_guard_insert_trg before insert on public.profiles
-     for each row execute function public.pg_profiles_guard_insert(%L)',
-    coalesce(v_role_col, ''));
+     for each row execute function public.pg_profiles_guard_insert(%L, %L)',
+    coalesce(v_role_col, ''), coalesce(v_pharm_col, ''));
 end $pg$;
 
 -- ---------------------------------------------------------------------------
@@ -449,6 +478,7 @@ declare
   t             text;
   v_write       text[];
   v_scope_req   boolean;
+  v_allow_upd   boolean;
   v_allow_del   boolean;
   v_col         text;
   v_scope       text;
@@ -458,18 +488,19 @@ declare
 begin
   for v_rec in
     select * from (values
-      ('medicines',         '{owner,pharmacist,inventory_manager}'::text[], true,  true),
-      ('inventory_batches', '{owner,pharmacist,inventory_manager}'::text[], true,  true),
-      ('stock_movements',   '{owner,pharmacist,inventory_manager}'::text[], true,  false),
-      ('inventory_alerts',  '{owner,pharmacist,inventory_manager}'::text[], true,  true),
-      ('drug_interactions', '{owner,pharmacist}'::text[],                   false, true),
-      ('agent_runs',        '{owner,pharmacist,inventory_manager}'::text[], true,  true),
-      ('reports',           '{owner,pharmacist}'::text[],                   true,  true)
-    ) as v(tbl, write_roles, scope_required, allow_delete)
+      ('medicines',         '{owner,pharmacist,inventory_manager}'::text[], true,  true,  true),
+      ('inventory_batches', '{owner,pharmacist,inventory_manager}'::text[], true,  true,  true),
+      ('stock_movements',   '{owner,pharmacist,inventory_manager}'::text[], true,  false, false),
+      ('inventory_alerts',  '{owner,pharmacist,inventory_manager}'::text[], true,  true,  true),
+      ('drug_interactions', '{owner,pharmacist}'::text[],                   false, true,  true),
+      ('agent_runs',        '{owner,pharmacist,inventory_manager}'::text[], true,  true,  true),
+      ('reports',           '{owner,pharmacist}'::text[],                   true,  true,  true)
+    ) as v(tbl, write_roles, scope_required, allow_update, allow_delete)
   loop
     t := v_rec.tbl;
     v_write := v_rec.write_roles;
     v_scope_req := v_rec.scope_required;
+    v_allow_upd := v_rec.allow_update;
     v_allow_del := v_rec.allow_delete;
 
     select c.column_name into v_col
@@ -505,9 +536,11 @@ begin
       'pg_' || t || '_insert', t, v_write, v_scope_w);
 
     execute format('drop policy if exists %I on public.%I', 'pg_' || t || '_update', t);
-    execute format(
-      'create policy %I on public.%I for update to authenticated using (public.pg_role() = any ((%L)::text[]) and %s) with check (public.pg_role() = any ((%L)::text[]) and %s)',
-      'pg_' || t || '_update', t, v_write, v_scope, v_write, v_scope_w);
+    if v_allow_upd then
+      execute format(
+        'create policy %I on public.%I for update to authenticated using (public.pg_role() = any ((%L)::text[]) and %s) with check (public.pg_role() = any ((%L)::text[]) and %s)',
+        'pg_' || t || '_update', t, v_write, v_scope, v_write, v_scope_w);
+    end if;
 
     execute format('drop policy if exists %I on public.%I', 'pg_' || t || '_delete', t);
     if v_allow_del then
@@ -630,11 +663,20 @@ grant execute on function public.pg_selftest(text) to service_role;
 commit;
 
 -- ---------------------------------------------------------------------------
--- 9) تحقّق سريع بعد التشغيل (قراءة فقط): RLS + عدد السياسات + الأعمدة المكتشفة
+-- 9) تحقّق سريع بعد التشغيل (قراءة فقط): RLS + عدد السياسات + السياسات النشطة + الأعمدة المكتشفة
 -- ---------------------------------------------------------------------------
 select s.table_name as "الجدول",
        s.rls_enabled  as "RLS",
        s.policy_count as "عدد السياسات",
+       coalesce((
+         select string_agg(
+                  format('%s (%s/%s)', pp.policyname, pp.cmd, pp.permissive),
+                  ', ' order by pp.policyname
+                )
+           from pg_policies pp
+          where pp.schemaname = 'public'
+            and pp.tablename = s.table_name
+       ), '—') as "السياسات النشطة",
        coalesce((
          select string_agg(c.column_name, ', ' order by c.column_name)
            from information_schema.columns c

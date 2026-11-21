@@ -134,11 +134,14 @@ test('ملف سياسات RLS متاح ولا يُنشئ جداول ويطابق
   assert.equal(response.status, 200);
   const sql = await response.text();
   assert.match(sql, /enable row level security/i);
+  assert.match(sql, /from pg_policies/i);
+  assert.match(sql, /drop policy if exists %I on public\.%I/i);
   assert.match(sql, /create policy/i);
   assert.match(sql, /\('medicines',\s*'\{owner,pharmacist,inventory_manager\}'/);
   assert.match(sql, /\('inventory_batches',\s*'\{owner,pharmacist,inventory_manager\}'/);
-  assert.match(sql, /\('stock_movements',\s*'\{owner,pharmacist,inventory_manager\}'.*false\)/);
+  assert.match(sql, /\('stock_movements',\s*'\{owner,pharmacist,inventory_manager\}'.*false,\s*false\)/);
   assert.match(sql, /\('inventory_alerts',\s*'\{owner,pharmacist,inventory_manager\}'/);
+  assert.match(sql, /pg_guard_bypass/i);
   assert.equal(/create\s+table/i.test(sql), false, 'ملف السياسات يجب ألا يُنشئ جداول');
   assert.equal(/drop\s+table/i.test(sql), false, 'ملف السياسات يجب ألا يحذف جداول');
   assert.equal(/insert\s+into\s+public\.(medicines|inventory_batches)/i.test(sql), false);
