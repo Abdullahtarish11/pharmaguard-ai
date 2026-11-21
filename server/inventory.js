@@ -81,6 +81,7 @@ export const COLUMN_CANDIDATES = Object.freeze({
     severity: ['severity', 'level', 'risk'],
     description: ['description', 'details', 'effect', 'notes'],
     source: ['source', 'reference', 'source_url'],
+    pharmacy: ['pharmacy_id', 'pharmacy', 'store_id', 'pharmacies_id'],
   },
 });
 

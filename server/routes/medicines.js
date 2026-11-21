@@ -152,6 +152,108 @@ router.post(
   }),
 );
 
+/** استيراد قائمة أدوية دفعة واحدة (JSON / CSV / دليل PDF) مع منع تكرار الاسم في نفس الصيدلية. */
+router.post(
+  '/import',
+  requireUser,
+  requireRole(ROLE.OWNER, ROLE.PHARMACIST, ROLE.INVENTORY),
+  guard,
+  asyncHandler(async (req, res) => {
+    const admin = getAdmin();
+    if (!admin) return httpError(res, 503, 'supabase_not_configured', 'لم تُضف مفاتيح Supabase بعد.');
+
+    const items = Array.isArray(req.body?.medicines) ? req.body.medicines : null;
+    if (!items || items.length === 0) {
+      return httpError(res, 400, 'empty_import', 'أرسل مصفوفة medicines غير فارغة.');
+    }
+    if (items.length > 500) {
+      return httpError(res, 400, 'too_many_items', 'الحد الأقصى في الدفعة الواحدة 500 دواء.');
+    }
+
+    const columns = await inventoryColumns();
+    if (columns.schemaOk && !columns.tables.medicines) {
+      return httpError(res, 404, 'table_missing', 'جدول medicines غير موجود في المشروع.');
+    }
+
+    const scope = requirePharmacy(columns, 'medicines', req.auth.profile);
+    if (!scope.ok) return httpError(res, scope.status, scope.code, scope.message);
+
+    const cols = columns.medicines;
+    if (!cols.name) {
+      return httpError(res, 400, 'name_column_missing', 'لم يُعثر على عمود اسم الدواء في جدول medicines.');
+    }
+
+    let existingQuery = admin.from('medicines').select(cols.name).limit(2000);
+    existingQuery = scopeToPharmacy(existingQuery, columns, 'medicines', req.auth.profile);
+    const existingRes = await existingQuery;
+    if (existingRes.error) return httpError(res, 500, 'medicines_query_failed', existingRes.error.message);
+
+    const seenNames = new Set(
+      (existingRes.data ?? [])
+        .map((row) => String(row[cols.name] ?? '').trim().toLowerCase())
+        .filter(Boolean),
+    );
+
+    const toInsert = [];
+    let skippedCount = 0;
+
+    for (const item of items) {
+      if (!item || !isNonEmptyString(item.name, 2)) {
+        skippedCount += 1;
+        continue;
+      }
+      const name = String(item.name).trim();
+      const key = name.toLowerCase();
+      if (seenNames.has(key)) {
+        skippedCount += 1;
+        continue;
+      }
+      seenNames.add(key);
+
+      const desired = { [cols.name]: name };
+      if (cols.scientificName && isNonEmptyString(item.scientificName)) {
+        desired[cols.scientificName] = String(item.scientificName).trim();
+      }
+      if (cols.form && isNonEmptyString(item.form)) desired[cols.form] = String(item.form).trim();
+      if (cols.strength && isNonEmptyString(item.strength)) desired[cols.strength] = String(item.strength).trim();
+      if (cols.barcode && isNonEmptyString(item.barcode)) desired[cols.barcode] = String(item.barcode).trim();
+      if (cols.unit && isNonEmptyString(item.unit)) desired[cols.unit] = String(item.unit).trim();
+      if (cols.reorderLevel && item.reorderLevel !== undefined && item.reorderLevel !== null && item.reorderLevel !== '') {
+        const level = Number(item.reorderLevel);
+        if (Number.isFinite(level) && level >= 0) {
+          desired[cols.reorderLevel] = Math.trunc(level);
+        }
+      }
+      if (cols.isActive) desired[cols.isActive] = true;
+      if (cols.pharmacy && scope.pharmacyId) {
+        desired[cols.pharmacy] = scope.pharmacyId;
+      }
+
+      toInsert.push(payloadFor(columns, 'medicines', desired));
+    }
+
+    if (toInsert.length === 0) {
+      return res.status(200).json({
+        ok: true,
+        insertedCount: 0,
+        skippedCount,
+        medicines: [],
+        message: 'جميع الأدوية المحددة مسجّلة مسبقًا في صيدليتك.',
+      });
+    }
+
+    const { data, error } = await admin.from('medicines').insert(toInsert).select();
+    if (error) return httpError(res, 500, 'medicines_import_failed', error.message);
+
+    return res.status(201).json({
+      ok: true,
+      insertedCount: data?.length ?? toInsert.length,
+      skippedCount,
+      medicines: (data ?? []).map((row) => shapeMedicine(row, cols)),
+    });
+  }),
+);
+
 /** تعديل دواء (بما فيه أرشفته عبر is_active بدل الحذف). */
 router.patch(
   '/:id',

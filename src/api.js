@@ -49,7 +49,11 @@ export const api = {
   },
   medicines: (token, query = '') => request(`/medicines${query}`, { token }),
   createMedicine: (token, payload) => request('/medicines', { method: 'POST', token, body: payload }),
+  importMedicines: (token, medicines) => request('/medicines/import', { method: 'POST', token, body: { medicines } }),
   updateMedicine: (token, id, payload) => request(`/medicines/${id}`, { method: 'PATCH', token, body: payload }),
+  interactions: (token) => request('/interactions', { token }),
+  importInteractions: (token, interactions) =>
+    request('/interactions/import', { method: 'POST', token, body: { interactions } }),
   batches: (token, query = '') => request(`/batches${query}`, { token }),
   createBatch: (token, payload) => request('/batches', { method: 'POST', token, body: payload }),
   updateBatch: (token, id, payload) => request(`/batches/${id}`, { method: 'PATCH', token, body: payload }),

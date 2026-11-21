@@ -3,6 +3,12 @@ import { api } from '../api.js';
 import { useApp } from '../context.jsx';
 import BarcodeScannerModal from '../components/BarcodeScannerModal.jsx';
 import { findMedicineByBarcode, parseBarcodePayload, pickFefoBatchForMedicine } from '../barcode.js';
+import {
+  PDF_INTERACTIONS,
+  PDF_MEDICINES,
+  buildMedicinesCsvTemplate,
+  parseCatalogText,
+} from '../catalogImport.js';
 
 const EMPTY_MEDICINE = {
   name: '',
@@ -35,6 +41,7 @@ export default function Inventory() {
   const { session, me } = useApp();
   const token = session?.access_token;
   const canWrite = me?.role === 'owner' || me?.role === 'pharmacist' || me?.role === 'inventory_manager';
+  const canImportClinical = me?.role === 'owner' || me?.role === 'pharmacist';
 
   const [medicines, setMedicines] = useState([]);
   const [batches, setBatches] = useState([]);
@@ -49,6 +56,8 @@ export default function Inventory() {
   const [scanModalMode, setScanModalMode] = useState(null);
   const [quickScanInput, setQuickScanInput] = useState('');
   const [scanMatch, setScanMatch] = useState(null);
+  const [importPreview, setImportPreview] = useState(null);
+  const [importing, setImporting] = useState(false);
   const [error, setError] = useState(null);
   const [notice, setNotice] = useState(null);
   const [busy, setBusy] = useState(true);
@@ -121,6 +130,76 @@ export default function Inventory() {
     } finally {
       setSaving(false);
     }
+  }
+
+  async function runCatalogImport({ meds = [], interactions = [], label = 'قاعدة البيانات' }) {
+    if (!token) return;
+    setImporting(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const parts = [];
+      if (meds.length > 0 && canWrite) {
+        const medRes = await api.importMedicines(token, meds);
+        parts.push(
+          `الأدوية: أُضيف ${medRes.insertedCount ?? 0}${medRes.skippedCount ? ` وتُخطّي ${medRes.skippedCount} مكرر` : ''}`,
+        );
+      }
+      if (interactions.length > 0 && canImportClinical) {
+        const ddiRes = await api.importInteractions(token, interactions);
+        parts.push(
+          `التداخلات: أُضيف ${ddiRes.insertedCount ?? 0}${ddiRes.skippedCount ? ` وتُخطّي ${ddiRes.skippedCount} مكرر` : ''}`,
+        );
+      }
+      if (parts.length === 0) {
+        setError('لا توجد صفوف صالحة للاستيراد أو أن دورك لا يملك صلاحية استيراد هذا النوع.');
+        return;
+      }
+      setNotice(`اكتمل استيراد ${label} — ${parts.join(' • ')}.`);
+      setImportPreview(null);
+      await load();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setImporting(false);
+    }
+  }
+
+  async function handleCatalogFile(event) {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    setError(null);
+    try {
+      const text = await file.text();
+      const parsed = parseCatalogText(text);
+      if (parsed.medicines.length === 0 && parsed.interactions.length === 0) {
+        setError('تعذر قراءة صفوف صالحة من الملف. تأكد أن الأعمدة مطابقة للقالب (CSV أو JSON).');
+        setImportPreview(null);
+        return;
+      }
+      setImportPreview({
+        fileName: file.name,
+        medicines: parsed.medicines,
+        interactions: parsed.interactions,
+      });
+    } catch (err) {
+      setError(`تعذر تحليل الملف: ${err.message}`);
+      setImportPreview(null);
+    }
+  }
+
+  function downloadCsvTemplate() {
+    const csv = `\uFEFF${buildMedicinesCsvTemplate()}\n`;
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'pharmaguard-medicines-template.csv';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
   }
 
   async function saveMedicineEdit(event) {
@@ -596,6 +675,110 @@ export default function Inventory() {
           </div>
         </form>
       </section>
+
+      {canWrite && (
+        <section className="card">
+          <div className="card-head">
+            <div>
+              <h2 className="section-title">استيراد قاعدة بيانات أدوية وتداخلات (دفعة واحدة)</h2>
+              <p className="muted small" style={{ margin: 0 }}>
+                أضف قائمة الأدوية والتداخلات من دليل PharmaGuard PDF أو ارفع ملف CSV / JSON مع منع التكرار تلقائيًا.
+              </p>
+            </div>
+            <button className="btn btn-ghost btn-sm" type="button" onClick={downloadCsvTemplate}>
+              تحميل قالب CSV
+            </button>
+          </div>
+
+          <div className="btn-row" style={{ marginTop: 0 }}>
+            <button
+              className="btn btn-primary"
+              type="button"
+              disabled={importing}
+              onClick={() =>
+                runCatalogImport({
+                  meds: PDF_MEDICINES,
+                  interactions: canImportClinical ? PDF_INTERACTIONS : [],
+                  label: 'دليل PharmaGuard PDF',
+                })
+              }
+            >
+              {importing
+                ? 'جارٍ الاستيراد…'
+                : canImportClinical
+                  ? 'استيراد دليل PDF كاملًا (25 دواءً + 15 تداخلًا)'
+                  : 'استيراد أدوية دليل PDF (25 دواءً)'}
+            </button>
+            <button
+              className="btn btn-soft"
+              type="button"
+              disabled={importing}
+              onClick={() => runCatalogImport({ meds: PDF_MEDICINES, label: 'أدوية دليل PDF' })}
+            >
+              استيراد الـ 25 دواءً فقط
+            </button>
+            {canImportClinical && (
+              <button
+                className="btn btn-soft"
+                type="button"
+                disabled={importing}
+                onClick={() => runCatalogImport({ interactions: PDF_INTERACTIONS, label: 'التداخلات الدوائية (15)' })}
+              >
+                استيراد الـ 15 تداخلًا دوائيًا
+              </button>
+            )}
+          </div>
+
+          <div className="field" style={{ marginTop: '1rem' }}>
+            <label htmlFor="catalog-file-input">أو ارفع ملف CSV / JSON من جهازك</label>
+            <input
+              id="catalog-file-input"
+              className="input"
+              type="file"
+              accept=".csv,.json,.txt"
+              disabled={importing}
+              onChange={handleCatalogFile}
+            />
+          </div>
+
+          {importPreview && (
+            <div className="scan-result-card">
+              <div className="card-head" style={{ marginBottom: 0 }}>
+                <div>
+                  <strong>جاهز للاستيراد: {importPreview.fileName}</strong>
+                  <div className="muted small">
+                    أدوية مكتشفة: {importPreview.medicines.length} • تداخلات مكتشفة: {importPreview.interactions.length}
+                  </div>
+                </div>
+                <div className="btn-row" style={{ marginTop: 0 }}>
+                  <button
+                    className="btn btn-primary btn-sm"
+                    type="button"
+                    disabled={importing}
+                    onClick={() =>
+                      runCatalogImport({
+                        meds: importPreview.medicines,
+                        interactions: importPreview.interactions,
+                        label: importPreview.fileName,
+                      })
+                    }
+                  >
+                    {importing ? 'جارٍ الاستيراد…' : 'تأكيد الاستيراد'}
+                  </button>
+                  <button
+                    className="btn btn-ghost btn-sm"
+                    type="button"
+                    disabled={importing}
+                    onClick={() => setImportPreview(null)}
+                  >
+                    إلغاء
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </section>
+      )}
 
       <section className="card">
         <div className="card-head">

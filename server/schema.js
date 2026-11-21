@@ -75,6 +75,7 @@ export async function getSchema(force = false) {
         return {
           name: columnName,
           type: meta?.format || meta?.type || 'unknown',
+          enumValues: Array.isArray(meta?.enum) ? meta.enum : null,
           required: required.includes(columnName),
           primaryKey: /primary key/i.test(description),
           foreignKey: /foreign key/i.test(description),

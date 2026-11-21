@@ -15,6 +15,7 @@ import movementsRouter from './routes/movements.js';
 import alertsRouter from './routes/alerts.js';
 import reportsRouter from './routes/reports.js';
 import agentRouter from './routes/agent.js';
+import interactionsRouter from './routes/interactions.js';
 import { httpError } from './util.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -72,6 +73,7 @@ app.use('/api/movements', movementsRouter);
 app.use('/api/alerts', alertsRouter);
 app.use('/api/reports', reportsRouter);
 app.use('/api/agent', agentRouter);
+app.use('/api/interactions', interactionsRouter);
 
 /** ملف سياسات RLS جاهز للنسخ إلى محرر SQL في Supabase (لا يحتوي أسرارًا). */
 app.get('/api/setup/sql', async (req, res, next) => {
