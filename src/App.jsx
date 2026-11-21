@@ -28,15 +28,19 @@ function Header() {
 
   return (
     <header className="site-header">
-      <div className="brand">
-        <span className="brand-mark" aria-hidden="true">
-          ✚
+      <Link className="brand" to={session ? '/app' : '/'}>
+        <span className="brand-mark">
+          <img
+            className="brand-logo"
+            src="/assets/aistudio/IMG-20261121-WA0000_ff2dfbd8.jpg"
+            alt="شعار PharmaGuard AI"
+          />
         </span>
         <div>
           <strong>PharmaGuard AI</strong>
           <span className="brand-sub">إدارة صيدلية محمية</span>
         </div>
-      </div>
+      </Link>
 
       <button
         className="btn btn-ghost btn-sm nav-toggle"

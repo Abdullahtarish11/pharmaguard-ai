@@ -58,12 +58,7 @@ export default function Landing() {
     <div className="grid">
       <section className="hero">
         <div>
-          <span className="eyebrow">PharmaGuard AI • شِراع 2026</span>
           <h1>إدارة صيدلية ذكية وآمنة على بياناتك الحقيقية</h1>
-          <p className="lead">
-            منصة متكاملة لإدارة المخزون الدوائي وفق قاعدة FEFO، وتتبع الحركات، وكشف التنبيهات اللحظية،
-            وفحص التداخلات الدوائية عبر ثلاثة وكلاء ذكيين يعملون حصريًا على جداول Supabase المحمية بعزل الصيدليات وRLS.
-          </p>
           <div className="btn-row">
             {session ? (
               <Link className="btn btn-primary" to="/app">
