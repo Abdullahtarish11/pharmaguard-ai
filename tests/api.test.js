@@ -122,6 +122,8 @@ test('المسارات المحمية ترفض الطلبات بدون جلسة'
     ['POST', '/api/reports'],
     ['POST', '/api/agent/ask', { question: 'ما حالة المخزون؟' }],
     ['GET', '/api/agent/runs'],
+    ['GET', '/api/agent/sweep/latest'],
+    ['POST', '/api/agent/sweep'],
   ]) {
     const response = await fetch(`${BASE}${route}`, {
       method,
@@ -130,6 +132,13 @@ test('المسارات المحمية ترفض الطلبات بدون جلسة'
     });
     assert.equal(response.status, 401, `${method} ${route} يجب أن يرفض بدون جلسة`);
   }
+});
+
+test('مسار الأتمتة الخارجي /api/agent/cron يرفض التشغيل بدون مفتاح أتمتة', async () => {
+  const response = await fetch(`${BASE}/api/agent/cron`, { method: 'POST' });
+  assert.equal(response.status, 503);
+  const body = await response.json();
+  assert.equal(body.error.code, 'cron_secret_not_configured');
 });
 
 test('ملف سياسات RLS متاح ولا يُنشئ جداول ويطابق صلاحيات الصيدلي', async () => {

@@ -68,4 +68,6 @@ export const api = {
   reports: (token) => request('/reports', { token }),
   askAgent: (token, question) => request('/agent/ask', { method: 'POST', token, body: { question } }),
   agentRuns: (token) => request('/agent/runs', { token }),
+  agentSweepLatest: (token) => request('/agent/sweep/latest', { token }),
+  runAgentSweep: (token) => request('/agent/sweep', { method: 'POST', token }),
 };

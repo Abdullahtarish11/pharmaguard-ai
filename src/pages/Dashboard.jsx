@@ -13,6 +13,7 @@ export default function Dashboard() {
   const [summary, setSummary] = useState(null);
   const [alertsList, setAlertsList] = useState([]);
   const [alertCounts, setAlertCounts] = useState(null);
+  const [sweepStatus, setSweepStatus] = useState(null);
   const [error, setError] = useState(null);
   const [notice, setNotice] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -42,12 +43,13 @@ export default function Dashboard() {
         tasks.push(
           api.reportSummary(token).catch(() => null),
           api.alerts(token).catch(() => null),
+          api.agentSweepLatest(token).catch(() => null),
         );
       } else {
-        tasks.push(Promise.resolve(null), Promise.resolve(null));
+        tasks.push(Promise.resolve(null), Promise.resolve(null), Promise.resolve(null));
       }
 
-      const [diagnostics, staffList, summaryData, alertsData] = await Promise.all(tasks);
+      const [diagnostics, staffList, summaryData, alertsData, sweepData] = await Promise.all(tasks);
       if (isOwner) {
         setReport(diagnostics);
         setStaff(staffList);
@@ -55,6 +57,7 @@ export default function Dashboard() {
       setSummary(summaryData?.summary ?? null);
       setAlertsList(Array.isArray(alertsData?.alerts) ? alertsData.alerts : []);
       setAlertCounts(alertsData?.counts ? { total: alertsData.total, ...alertsData.counts } : null);
+      setSweepStatus(sweepData);
     } finally {
       setBusy(false);
     }
@@ -271,6 +274,14 @@ export default function Dashboard() {
               الوكلاء الذكيون
             </Link>
           </div>
+          {sweepStatus?.scheduler && (
+            <p className="muted small" style={{ marginTop: '0.85rem', marginBottom: 0 }}>
+              أتمتة الوكلاء (كل {sweepStatus.scheduler.intervalHours ?? 6} ساعات):{' '}
+              {sweepStatus.latest?.audit?.agents
+                ? `آخر فحص رصد ${sweepStatus.latest.audit.agents.inventory_agent?.alertsDetected ?? 0} تنبيهًا و${sweepStatus.latest.audit.agents.safety_agent?.inventoryConflictsCount ?? 0} تداخلًا دوائيًا.`
+                : 'مفعّلة وجاهزة للفحص الدوري من صفحة الوكلاء.'}
+            </p>
+          )}
         </section>
       )}
 

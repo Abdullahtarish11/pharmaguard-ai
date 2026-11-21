@@ -1,8 +1,15 @@
 import express from 'express';
+import crypto from 'node:crypto';
+import { env } from '../env.js';
 import { getAdmin } from '../supabase.js';
 import { requireUser, requireRole } from '../auth.js';
 import { ROLE } from '../roles.js';
 import { asyncHandler, httpError, isNonEmptyString } from '../util.js';
+import {
+  getLatestSweepForPharmacy,
+  getSchedulerState,
+  runAutonomousSweep,
+} from '../agentSweep.js';
 import {
   inventoryColumns,
   shapeMedicine,
@@ -659,7 +666,7 @@ router.get(
         const answerValue = runCols.answer ? row[runCols.answer] ?? null : null;
         return {
           id: row[runCols.id] ?? null,
-          type: row.agent_type ?? row.type ?? null,
+          type: runCols.agentType ? row[runCols.agentType] ?? null : row.agent_type ?? row.type ?? null,
           status: runCols.status ? row[runCols.status] ?? null : null,
           input: promptValue,
           prompt: promptValue,
@@ -667,6 +674,110 @@ router.get(
           createdAt: runCols.createdAt ? row[runCols.createdAt] ?? null : null,
         };
       }),
+    });
+  }),
+);
+
+/** حالة وآخر نتيجة للفحص التلقائي الشامل (كل 6 ساعات) لصيدلية المستخدم. */
+router.get(
+  '/sweep/latest',
+  requireUser,
+  requireRole(ROLE.OWNER, ROLE.PHARMACIST, ROLE.INVENTORY),
+  asyncHandler(async (req, res) => {
+    const admin = getAdmin();
+    if (!admin) return httpError(res, 503, 'supabase_not_configured', 'لم تُضف مفاتيح Supabase بعد.');
+
+    const columns = await inventoryColumns();
+    const scope = requirePharmacy(columns, 'medicines', req.auth.profile);
+    if (!scope.ok) return httpError(res, scope.status, scope.code, scope.message);
+
+    const data = await getLatestSweepForPharmacy(admin, columns, scope.pharmacyId);
+    return res.json(data);
+  }),
+);
+
+/** تشغيل يدوي فوري للفحص الشامل للوكلاء الثلاثة على صيدلية المستخدم. */
+router.post(
+  '/sweep',
+  requireUser,
+  requireRole(ROLE.OWNER, ROLE.PHARMACIST, ROLE.INVENTORY),
+  asyncHandler(async (req, res) => {
+    const admin = getAdmin();
+    if (!admin) return httpError(res, 503, 'supabase_not_configured', 'لم تُضف مفاتيح Supabase بعد.');
+
+    const columns = await inventoryColumns();
+    const scope = requirePharmacy(columns, 'medicines', req.auth.profile);
+    if (!scope.ok) return httpError(res, scope.status, scope.code, scope.message);
+
+    const sweep = await runAutonomousSweep({
+      admin,
+      columns,
+      pharmacyId: scope.pharmacyId,
+      trigger: 'manual',
+      triggeredBy: req.auth.user.id,
+    });
+
+    const first = sweep.results[0] ?? null;
+    return res.json({
+      ok: true,
+      scheduler: getSchedulerState(),
+      latest: first
+        ? {
+            source: 'live',
+            id: null,
+            title: `فحص شامل (${sweep.triggerLabel})`,
+            createdAt: first.ranAt,
+            audit: first.audit,
+            reportText: first.reportText,
+            persistence: first.persistence,
+          }
+        : null,
+    });
+  }),
+);
+
+function secretsEqual(provided, expected) {
+  if (!provided || !expected) return false;
+  const a = Buffer.from(String(provided));
+  const b = Buffer.from(String(expected));
+  if (a.length !== b.length) return false;
+  return crypto.timingSafeEqual(a, b);
+}
+
+/** نقطة تشغيل خارجية محمية بمفتاح أتمتة (Cron Webhook) تعمل كل 6 ساعات على جميع الصيدليات. */
+router.post(
+  '/cron',
+  asyncHandler(async (req, res) => {
+    if (!env.agentCronSecret) {
+      return httpError(res, 503, 'cron_secret_not_configured', 'مفتاح أتمتة الوكلاء (AGENT_CRON_SECRET) غير مضبوط.');
+    }
+
+    const headerSecret = req.get('x-cron-secret') || '';
+    const authHeader = req.get('authorization') || '';
+    const bearerSecret = authHeader.toLowerCase().startsWith('bearer ') ? authHeader.slice(7).trim() : '';
+    const provided = headerSecret || bearerSecret;
+
+    if (!secretsEqual(provided, env.agentCronSecret)) {
+      return httpError(res, 401, 'invalid_cron_secret', 'مفتاح الأتمتة غير صالح.');
+    }
+
+    const admin = getAdmin();
+    if (!admin) return httpError(res, 503, 'supabase_not_configured', 'لم تُضف مفاتيح Supabase بعد.');
+
+    const columns = await inventoryColumns();
+    const sweep = await runAutonomousSweep({
+      admin,
+      columns,
+      pharmacyId: null,
+      trigger: 'cron',
+    });
+
+    return res.json({
+      ok: true,
+      trigger: sweep.trigger,
+      ranAt: sweep.ranAt,
+      pharmaciesScanned: sweep.pharmaciesScanned,
+      scheduler: getSchedulerState(),
     });
   }),
 );

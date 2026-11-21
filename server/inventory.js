@@ -67,6 +67,7 @@ export const COLUMN_CANDIDATES = Object.freeze({
   },
   agent_runs: {
     id: ['id', 'run_id'],
+    agentType: ['agent_type', 'type', 'agent'],
     prompt: ['prompt', 'query', 'question', 'input'],
     answer: ['answer', 'response', 'output', 'result'],
     status: ['status', 'state'],

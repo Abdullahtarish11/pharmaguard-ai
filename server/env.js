@@ -22,6 +22,11 @@ export const env = {
   ),
   serviceRoleKey: firstNonEmpty(process.env.SUPABASE_SERVICE_ROLE_KEY),
   bootstrapToken: firstNonEmpty(process.env.OWNER_BOOTSTRAP_TOKEN),
+  agentCronSecret: firstNonEmpty(process.env.AGENT_CRON_SECRET, process.env.CRON_SECRET),
+  agentSweepIntervalHours: (() => {
+    const parsed = Number(process.env.AGENT_SWEEP_INTERVAL_HOURS || 6);
+    return Number.isFinite(parsed) && parsed >= 1 && parsed <= 24 ? parsed : 6;
+  })(),
 };
 
 /** الحالة العامة للتكوين — لا تحتوي أي قيمة سرية. */
@@ -31,6 +36,8 @@ export function configState() {
     anonKeyPresent: Boolean(env.anonKey),
     serviceRolePresent: Boolean(env.serviceRoleKey),
     bootstrapTokenPresent: Boolean(env.bootstrapToken),
+    agentCronSecretPresent: Boolean(env.agentCronSecret),
+    agentSweepIntervalHours: env.agentSweepIntervalHours,
     ready: Boolean(env.supabaseUrl && env.anonKey && env.serviceRoleKey),
   };
 }
