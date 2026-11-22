@@ -73,12 +73,7 @@ export default function Reports() {
     <div className="grid">
       <section className="card">
         <div className="card-head">
-          <div>
-            <h1 className="section-title">التقارير</h1>
-            <p className="muted small" style={{ margin: 0 }}>
-              {data?.generatedFrom ?? 'أرقام محسوبة من جداول قاعدة بياناتك الحالية.'}
-            </p>
-          </div>
+          <h1 className="section-title">التقارير</h1>
           <div className="btn-row" style={{ marginTop: 0 }}>
             <button className="btn btn-soft" type="button" onClick={load} disabled={busy}>
               {busy ? 'جارٍ الحساب…' : 'تحديث'}
@@ -261,7 +256,7 @@ export default function Reports() {
             </table>
           </div>
         ) : (
-          <p className="muted small">لا توجد لقطات محفوظة. زر «حفظ لقطة» يضيف سجلًا في جدول reports فقط.</p>
+          <p className="muted small">لا توجد لقطات محفوظة.</p>
         )}
       </section>
 

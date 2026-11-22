@@ -42,9 +42,6 @@ export default function ExpiryAlertsPanel({ summary, alerts = [], loading = fals
             </h2>
             <span className="badge badge-muted">تحديث تلقائي</span>
           </div>
-          <p className="muted small" style={{ margin: '0.25rem 0 0' }}>
-            قائمة فورية بالأدوية والدفعات المنتهية أو القريبة من الانتهاء خلال 90 يومًا ملوّنة حسب درجة الخطورة.
-          </p>
         </div>
 
         <div className="btn-row" style={{ marginTop: 0 }}>

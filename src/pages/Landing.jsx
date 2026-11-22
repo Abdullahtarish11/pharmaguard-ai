@@ -122,45 +122,6 @@ export default function Landing() {
           onRefresh={loadExpiryAlerts}
         />
       )}
-
-      <section className="grid grid-3">
-        <div className="card">
-          <h3 className="section-title">١. مخزون دقيق ونظام FEFO</h3>
-          <p className="muted small">
-            إدارة الأدوية والدفعات وتواريخ الصلاحية مع تطبيق قاعدة الأقرب انتهاءً أولًا (FEFO) ومنع الصرف
-            منتهي الصلاحية أو النزول تحت الصفر.
-          </p>
-        </div>
-        <div className="card">
-          <h3 className="section-title">٢. ثلاثة وكلاء ذكيين بلا اختلاق</h3>
-          <p className="muted small">
-            وكيل إدارة المخزون وإعادة الطلب، وكيل سلامة الأدوية من جدول التداخلات الفعلي، ووكيل التحليل والتقارير
-            بأرقام موثقة.
-          </p>
-        </div>
-        <div className="card">
-          <h3 className="section-title">٣. عزل الصيدليات وصلاحيات RLS</h3>
-          <p className="muted small">
-            ثلاثة أدوار مفصولة الصلاحيات (مالك الصيدلية، صيدلي، مسؤول المخزون) مع عزل كامل لبيانات كل صيدلية
-            على مستوى قاعدة البيانات والخادم.
-          </p>
-        </div>
-      </section>
-
-      <section className="card">
-        <h2 className="section-title">الوحدات التشغيلية المتصلة بـ Supabase</h2>
-        <p className="muted small">
-          جميع الوحدات التالية مربوطة مباشرةً بالجداول الـ11 دون بيانات وهمية وجاهزة للعمل فور تسجيل الدخول:
-        </p>
-        <div className="pill-list">
-          <span className="pill">الأدوية والدفعات (FEFO)</span>
-          <span className="pill">حركات الاستلام والصرف والإتلاف</span>
-          <span className="pill">تنبيهات النقص والصلاحية</span>
-          <span className="pill">التقارير وحفظ اللقطات</span>
-          <span className="pill">الوكيل الذكي وسجل الأسئلة</span>
-          <span className="pill">تطبيق ويب متقدم (PWA)</span>
-        </div>
-      </section>
     </div>
   );
 }

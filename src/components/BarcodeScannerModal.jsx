@@ -115,12 +115,7 @@ export default function BarcodeScannerModal({ open, title = 'مسح البارك
     <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label={title}>
       <div className="modal-card scanner-modal">
         <div className="card-head">
-          <div>
-            <h3 className="section-title">{title}</h3>
-            <p className="muted small" style={{ margin: 0 }}>
-              يدعم الباركود العادي (EAN-13 / Code-128) وGS1 DataMatrix للدواء والدفعة والصلاحية.
-            </p>
-          </div>
+          <h3 className="section-title">{title}</h3>
           <button className="btn btn-ghost btn-sm" type="button" onClick={onClose}>
             ✕ إغلاق
           </button>

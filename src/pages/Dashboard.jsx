@@ -274,14 +274,6 @@ export default function Dashboard() {
               الوكلاء الذكيون
             </Link>
           </div>
-          {sweepStatus?.scheduler && (
-            <p className="muted small" style={{ marginTop: '0.85rem', marginBottom: 0 }}>
-              أتمتة الوكلاء (كل {sweepStatus.scheduler.intervalHours ?? 6} ساعات):{' '}
-              {sweepStatus.latest?.audit?.agents
-                ? `آخر فحص رصد ${sweepStatus.latest.audit.agents.inventory_agent?.alertsDetected ?? 0} تنبيهًا و${sweepStatus.latest.audit.agents.safety_agent?.inventoryConflictsCount ?? 0} تداخلًا دوائيًا.`
-                : 'مفعّلة وجاهزة للفحص الدوري من صفحة الوكلاء.'}
-            </p>
-          )}
         </section>
       )}
 
@@ -382,7 +374,7 @@ export default function Dashboard() {
               </table>
             </div>
           ) : (
-            <p className="muted small">لا يوجد موظفون مسجّلون بعد. شارك صفحة التسجيل مع فريقك.</p>
+            <p className="muted small">لا يوجد موظفون مسجّلون بعد.</p>
           )}
         </section>
       )}

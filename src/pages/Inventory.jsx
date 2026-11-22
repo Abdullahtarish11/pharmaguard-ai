@@ -446,12 +446,7 @@ export default function Inventory() {
     <div className="grid">
       <section className="card">
         <div className="card-head">
-          <div>
-            <h1 className="section-title">المخزون</h1>
-            <p className="muted small" style={{ margin: 0 }}>
-              كل الأرقام محسوبة من جداول medicines وinventory_batches الحالية مع ترتيب FEFO للصرف.
-            </p>
-          </div>
+          <h1 className="section-title">المخزون</h1>
           <div className="btn-row" style={{ marginTop: 0 }}>
             <button className="btn btn-primary" type="button" onClick={() => setScanModalMode('quick')}>
               📷 مسح باركود
@@ -679,12 +674,7 @@ export default function Inventory() {
       {canWrite && (
         <section className="card">
           <div className="card-head">
-            <div>
-              <h2 className="section-title">استيراد قاعدة بيانات أدوية وتداخلات (دفعة واحدة)</h2>
-              <p className="muted small" style={{ margin: 0 }}>
-                أضف قائمة الأدوية والتداخلات من دليل PharmaGuard PDF أو ارفع ملف CSV / JSON مع منع التكرار تلقائيًا.
-              </p>
-            </div>
+            <h2 className="section-title">استيراد قاعدة بيانات أدوية وتداخلات (دفعة واحدة)</h2>
             <button className="btn btn-ghost btn-sm" type="button" onClick={downloadCsvTemplate}>
               تحميل قالب CSV
             </button>
@@ -1217,7 +1207,6 @@ export default function Inventory() {
         <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="تعديل بيانات الدفعة">
           <div className="modal-card">
             <h3 className="section-title">تعديل بيانات الدفعة</h3>
-            <p className="muted small">لتعديل الكمية استخدم قسم تسجيل حركة مخزون.</p>
             <form className="form" onSubmit={saveBatchEdit}>
               <div className="field">
                 <label htmlFor="eb-num">رقم الدفعة</label>

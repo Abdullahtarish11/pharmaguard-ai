@@ -1,10 +1,9 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useApp } from '../context.jsx';
-import { roleLabel } from '../labels.js';
 
 export default function Login() {
-  const { supabase, config, session, passwordRecovery, clearPasswordRecovery } = useApp();
+  const { supabase, session, passwordRecovery, clearPasswordRecovery } = useApp();
   const navigate = useNavigate();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -80,9 +79,6 @@ export default function Login() {
         <h1 className="section-title">
           {passwordRecovery ? 'تعيين كلمة مرور جديدة' : forgotMode ? 'استعادة كلمة المرور' : 'تسجيل الدخول'}
         </h1>
-        <p className="muted small">
-          الدخول يتم عبر Supabase Auth في مشروعك، والجلسة تحمل هويتك إلى سياسات RLS.
-        </p>
 
         {!ready && (
           <div className="alert alert-warn">
@@ -206,10 +202,6 @@ export default function Login() {
 
       <div className="card">
         <h2 className="section-title">لا تملك حسابًا؟</h2>
-        <p className="muted small">
-          حسابات الموظفين تُنشأ بالتسجيل الذاتي بدور صيدلي أو مسؤول مخزون فقط. أول حساب مالك للصيدلية يُنشأ عبر
-          مسار تهيئة محمي برمز سري.
-        </p>
         <div className="btn-row">
           <Link className="btn btn-soft" to="/register">
             تسجيل موظف
@@ -218,11 +210,6 @@ export default function Login() {
             تهيئة المالك
           </Link>
         </div>
-        {config?.selfRegisterRoles && (
-          <p className="hint" style={{ marginTop: '1rem' }}>
-            الأدوار المتاحة للتسجيل: {config.selfRegisterRoles.map((r) => roleLabel(r)).join(' • ')}
-          </p>
-        )}
       </div>
     </div>
   );

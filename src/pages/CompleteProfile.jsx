@@ -27,10 +27,6 @@ export default function CompleteProfile() {
   return (
     <div className="card">
       <h1 className="section-title">أكمل ملفك الشخصي</h1>
-      <p className="muted small">
-        حسابك موجود في Supabase Auth لكنه بلا ملف في جدول profiles. اختر دورك الوظيفي — لن يمنحك ذلك صلاحية على
-        أي صيدلية قبل أن يربطك المالك بها.
-      </p>
       {error && <div className="alert alert-error">{error}</div>}
       <form className="form" onSubmit={handleSubmit}>
         <div className="field">
@@ -60,7 +56,6 @@ export default function CompleteProfile() {
               </option>
             ))}
           </select>
-          <span className="hint">دور مالك الصيدلية غير متاح هنا إطلاقًا.</span>
         </div>
         <button className="btn btn-primary" type="submit" disabled={busy}>
           {busy ? 'جارٍ الحفظ…' : 'حفظ الملف'}

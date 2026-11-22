@@ -66,14 +66,9 @@ export default function Setup() {
   const reason = status?.reason ? REASONS[status.reason] ?? null : null;
 
   return (
-    <div className="grid grid-2">
+    <div className="grid">
       <div className="card">
         <h1 className="section-title">تهيئة أول مالك للصيدلية</h1>
-        <p className="muted small">
-          هذه العملية تعمل مرة واحدة فقط، وتتطلب رمزًا سريًا موجودًا على السيرفر فقط
-          (<span dir="ltr">OWNER_BOOTSTRAP_TOKEN</span>). الرمز لا يُخزَّن في قاعدة البيانات ولا يظهر في أي ملف
-          عام.
-        </p>
 
         {status && (
           <div className={ownerExists ? 'alert alert-warn' : 'alert'}>
@@ -109,7 +104,6 @@ export default function Setup() {
               required
               disabled={busy || ownerExists}
             />
-            <span className="hint">نفس قيمة OWNER_BOOTSTRAP_TOKEN في متغيرات بيئة السيرفر.</span>
           </div>
           <div className="field">
             <label htmlFor="fullName">اسم المالك الكامل</label>
@@ -168,20 +162,6 @@ export default function Setup() {
             {busy ? 'جارٍ الإنشاء…' : 'إنشاء حساب المالك'}
           </button>
         </form>
-      </div>
-
-      <div className="card">
-        <h2 className="section-title">كيف يعمل الأمان هنا؟</h2>
-        <ol className="steps">
-          <li>الرمز يُقارن على السيرفر بمقارنة زمنية ثابتة، ولا يُعاد إرساله إلى المتصفح أبدًا.</li>
-          <li>لا يُنشأ الحساب إلا إذا لم يوجد أي مالك في جدول profiles.</li>
-          <li>المسار محدود المحاولات، ويُرفض تلقائيًا بعد وجود مالك واحد.</li>
-          <li>إنشاء حساب Auth والملف الشخصي والصيدلية يتم بمفتاح service_role على السيرفر فقط.</li>
-          <li>عند أي فشل جزئي يُحذف حساب Auth الذي أُنشئ للتو، فلا تبقى بقايا.</li>
-        </ol>
-        <p className="hint" style={{ marginTop: '0.8rem' }}>
-          بعد إنشاء المالك: أضف سياسات RLS من صفحة التشخيص، ثم سجّل الدخول وتحقق من حالة الربط.
-        </p>
       </div>
     </div>
   );

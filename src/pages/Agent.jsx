@@ -148,12 +148,7 @@ export default function Agent() {
     <div className="grid">
       <section className="card">
         <div className="card-head">
-          <div>
-            <h2 className="section-title">المراقبة والأتمتة التلقائية للوكلاء (كل {scheduler?.intervalHours ?? 6} ساعات)</h2>
-            <p className="muted small" style={{ margin: 0 }}>
-              يفحص الوكلاء الثلاثة تلقائيًا كل المخزون والدفعات والتداخلات الدوائية والحركات، ويحفظون التنبيهات والتقارير في قاعدة البيانات دوريًا.
-            </p>
-          </div>
+          <h2 className="section-title">المراقبة والأتمتة التلقائية للوكلاء (كل {scheduler?.intervalHours ?? 6} ساعات)</h2>
           <div className="btn-row" style={{ marginTop: 0 }}>
             <span className={scheduler?.active ? 'badge' : 'badge badge-muted'}>
               {scheduler?.active ? `مجدول كل ${scheduler.intervalHours} ساعات` : 'جاهز للفحص'}
@@ -177,23 +172,24 @@ export default function Agent() {
             <strong style={{ fontSize: '1rem' }}>
               {scheduler?.lastRunAt ? formatDate(scheduler.lastRunAt) : 'لم يُنفَّذ بعد'}
             </strong>
-            <span className="hint">{latestAudit?.triggerLabel ?? 'اضغط تشغيل فحص شامل الآن أو انتظر الجدولة'}</span>
+            {latestAudit?.triggerLabel && <span className="hint">{latestAudit.triggerLabel}</span>}
           </div>
           <div className="stat">
             <span>الفحص المجدول القادم</span>
             <strong style={{ fontSize: '1rem' }}>
               {scheduler?.nextRunAt ? formatDate(scheduler.nextRunAt) : 'كل 6 ساعات'}
             </strong>
-            <span className="hint">يعمل عبر الخادم السحابي وأتمتة GitHub 24/7</span>
           </div>
           <div className="stat">
             <span>ملخص آخر تدقيق</span>
             <strong style={{ fontSize: '1rem' }}>
               {invAgent ? `${invAgent.alertsDetected} تنبيه / ${safetyAgent?.inventoryConflictsCount ?? 0} تداخل` : '—'}
             </strong>
-            <span className="hint">
-              {invAgent ? `فُحص ${invAgent.medicinesScanned} دواءً و${invAgent.batchesScanned} دفعة` : 'في انتظار أول فحص'}
-            </span>
+            {invAgent && (
+              <span className="hint">
+                {`فُحص ${invAgent.medicinesScanned} دواءً و${invAgent.batchesScanned} دفعة`}
+              </span>
+            )}
           </div>
         </div>
 
@@ -269,12 +265,7 @@ export default function Agent() {
 
       <section className="card">
         <div className="card-head">
-          <div>
-            <h1 className="section-title">الوكلاء الذكيون الثلاثة</h1>
-            <p className="muted small" style={{ margin: 0 }}>
-              إجابات مبنية حصريًا على جداولك الفعلية (إدارة المخزون وFEFO، سلامة الأدوية، التحليل والتقارير) دون اختلاق أو تشخيص طبي.
-            </p>
-          </div>
+          <h1 className="section-title">الوكلاء الذكيون الثلاثة</h1>
           <span className="badge">بيانات فعلية</span>
         </div>
 

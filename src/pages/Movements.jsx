@@ -129,12 +129,7 @@ export default function Movements() {
     <div className="grid">
       <section className="card">
         <div className="card-head">
-          <div>
-            <h1 className="section-title">حركات المخزون</h1>
-            <p className="muted small" style={{ margin: 0 }}>
-              سجل stock_movements الفعلي. الصرف يطبّق قاعدة FEFO (الأقرب انتهاءً أولًا) ويمنع الكميات السالبة.
-            </p>
-          </div>
+          <h1 className="section-title">حركات المخزون</h1>
           <button className="btn btn-soft" type="button" onClick={load} disabled={busy}>
             {busy ? 'جارٍ التحديث…' : 'تحديث'}
           </button>

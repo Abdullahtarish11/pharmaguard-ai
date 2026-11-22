@@ -192,9 +192,6 @@ export default function Diagnostics() {
             <dt>المجهول محجوب</dt>
             <dd>{report?.permissions?.anonymousBlockedFromDiagnostics ? 'نعم' : 'غير مؤكد'}</dd>
           </dl>
-          <p className="hint">
-            اختبار الكتابة يُنفَّذ داخل دالة تُرجع كل شيء، فلا يبقى أي صف تجريبي في الجداول.
-          </p>
         </div>
       </section>
 
@@ -210,10 +207,6 @@ export default function Diagnostics() {
             </button>
           </div>
         </div>
-        <p className="muted small">
-          الصق الملف كاملًا في Supabase → SQL Editor → Run. الملف لا يُنشئ جداول ولا يحذفها، ويعيد تفعيل RLS
-          وسياسات الأدوار الثلاثة، ويمكن تشغيله أكثر من مرة بأمان.
-        </p>
         {sql && <pre className="code">{sql}</pre>}
       </div>
     </div>

@@ -99,12 +99,7 @@ export default function Alerts() {
     <div className="grid">
       <section className="card">
         <div className="card-head">
-          <div>
-            <h1 className="section-title">التنبيهات</h1>
-            <p className="muted small" style={{ margin: 0 }}>
-              تُحسب من كميات الدفعات وتواريخ صلاحيتها الفعلية في قاعدة بياناتك فقط.
-            </p>
-          </div>
+          <h1 className="section-title">التنبيهات</h1>
           <button className="btn btn-soft" type="button" onClick={load} disabled={busy}>
             {busy ? 'جارٍ التحديث…' : 'تحديث'}
           </button>
@@ -271,9 +266,7 @@ export default function Alerts() {
             </table>
           </div>
         ) : (
-          <p className="muted small">
-            لا توجد سجلات محفوظة في inventory_alerts. التنبيهات أعلاه محسوبة لحظيًا من المخزون.
-          </p>
+          <p className="muted small">لا توجد سجلات محفوظة.</p>
         )}
       </section>
     </div>

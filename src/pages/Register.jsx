@@ -53,10 +53,6 @@ export default function Register() {
     <div className="grid grid-2">
       <div className="card">
         <h1 className="section-title">إنشاء حساب موظف</h1>
-        <p className="muted small">
-          التسجيل الذاتي متاح لدورين فقط: صيدلي أو مسؤول مخزون. دور مالك الصيدلية غير موجود في هذا النموذج ولا
-          يمكن اختياره أو إرساله.
-        </p>
 
         {!ready && (
           <div className="alert alert-warn">
@@ -130,7 +126,6 @@ export default function Register() {
                 </option>
               ))}
             </select>
-            <span className="hint">لن يمنحك التسجيل أي صلاحية على صيدلية قبل أن يربطك المالك بها.</span>
           </div>
           <button className="btn btn-primary" type="submit" disabled={!ready || busy}>
             {busy ? 'جارٍ الإنشاء…' : 'إنشاء الحساب'}
@@ -140,10 +135,6 @@ export default function Register() {
 
       <div className="card">
         <h2 className="section-title">هل أنت مالك الصيدلية؟</h2>
-        <p className="muted small">
-          حساب المالك يُنشأ مرة واحدة فقط عبر مسار تهيئة محمي برمز سري على السيرفر، ولا يمكن إنشاؤه من نموذج
-          التسجيل العام. بعد وجود مالك واحد يُغلق المسار تلقائيًا.
-        </p>
         <div className="btn-row">
           <Link className="btn btn-ghost" to="/setup">
             فتح صفحة التهيئة
