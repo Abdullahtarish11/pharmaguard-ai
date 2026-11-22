@@ -19,6 +19,7 @@ import {
   planFefoDispense,
   findFefoBlockingBatch,
 } from '../inventory.js';
+import { notifyInventoryChange } from '../agentSweep.js';
 
 const router = express.Router();
 
@@ -254,6 +255,7 @@ router.post(
         createdMovements.push(shapeMovement(row, moveCols));
       }
 
+      notifyInventoryChange(batchScope.pharmacyId, 'صرف تلقائي بترتيب FEFO');
       return res.status(201).json({
         ok: true,
         mode: 'fefo',
@@ -365,6 +367,7 @@ router.post(
       return httpError(res, 500, 'movement_insert_failed', error.message);
     }
 
+    notifyInventoryChange(batchScope.pharmacyId, `حركة مخزون (${type})`);
     return res.status(201).json({
       ok: true,
       mode: 'batch',

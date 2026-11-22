@@ -12,6 +12,7 @@ import {
   requirePharmacy,
   payloadFor,
 } from '../inventory.js';
+import { notifyInventoryChange } from '../agentSweep.js';
 
 const router = express.Router();
 
@@ -176,6 +177,7 @@ router.post(
       upd = scopeToPharmacy(upd, columns, 'alerts', req.auth.profile);
       const { data, error } = await upd.select().limit(1);
       if (error) return httpError(res, 500, 'alert_resolve_failed', error.message);
+      notifyInventoryChange(scope.pharmacyId, 'إغلاق تنبيه');
       return res.json({ ok: true, id: data?.[0]?.[alertCols.id] ?? matched.id, resolved: true });
     }
 
@@ -193,6 +195,7 @@ router.post(
     const { data, error } = await admin.from('inventory_alerts').insert(payload).select().limit(1);
     if (error) return httpError(res, 500, 'alert_resolve_failed', error.message);
 
+    notifyInventoryChange(scope.pharmacyId, 'إغلاق تنبيه');
     return res.status(201).json({
       ok: true,
       id: data?.[0]?.[alertCols.id] ?? null,
@@ -228,6 +231,7 @@ router.patch(
     if (error) return httpError(res, 500, 'alert_resolve_failed', error.message);
     if (!data?.length) return httpError(res, 404, 'alert_not_found', 'التنبيه غير موجود.');
 
+    notifyInventoryChange(scope.pharmacyId, 'إغلاق تنبيه');
     return res.json({ ok: true, id: req.params.id, resolved: true });
   }),
 );

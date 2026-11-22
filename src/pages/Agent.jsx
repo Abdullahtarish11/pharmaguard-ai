@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { api } from '../api.js';
 import { useApp } from '../context.jsx';
 import { formatDate } from '../labels.js';
+import LiveAgentsMonitor from '../components/LiveAgentsMonitor.jsx';
 
 const AGENT_GROUPS = [
   {
@@ -76,10 +77,6 @@ export default function Agent() {
   const [question, setQuestion] = useState('');
   const [result, setResult] = useState(null);
   const [runs, setRuns] = useState(null);
-  const [sweepData, setSweepData] = useState(null);
-  const [sweepBusy, setSweepBusy] = useState(false);
-  const [sweepError, setSweepError] = useState(null);
-  const [showSweepReport, setShowSweepReport] = useState(false);
   const [selectedRun, setSelectedRun] = useState(null);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -89,12 +86,8 @@ export default function Agent() {
   const loadRuns = useCallback(async () => {
     if (!token) return;
     try {
-      const [runsRes, sweepRes] = await Promise.all([
-        api.agentRuns(token),
-        api.agentSweepLatest(token).catch(() => null),
-      ]);
+      const runsRes = await api.agentRuns(token);
       setRuns(runsRes);
-      if (sweepRes) setSweepData(sweepRes);
     } catch (err) {
       setRuns({ error: err.message, runs: [] });
     }
@@ -103,22 +96,6 @@ export default function Agent() {
   useEffect(() => {
     loadRuns();
   }, [loadRuns]);
-
-  async function runComprehensiveSweep() {
-    if (!token || !canRun) return;
-    setSweepBusy(true);
-    setSweepError(null);
-    try {
-      const res = await api.runAgentSweep(token);
-      setSweepData({ scheduler: res.scheduler, latest: res.latest });
-      setShowSweepReport(true);
-      await loadRuns();
-    } catch (err) {
-      setSweepError(err.message);
-    } finally {
-      setSweepBusy(false);
-    }
-  }
 
   async function ask(text) {
     const value = (text ?? question).trim();
@@ -138,130 +115,14 @@ export default function Agent() {
     }
   }
 
-  const latestAudit = sweepData?.latest?.audit ?? null;
-  const invAgent = latestAudit?.agents?.inventory_agent ?? null;
-  const safetyAgent = latestAudit?.agents?.safety_agent ?? null;
-  const analyticsAgent = latestAudit?.agents?.analytics_agent ?? null;
-  const scheduler = sweepData?.scheduler ?? null;
-
   return (
     <div className="grid">
-      <section className="card">
-        <div className="card-head">
-          <h2 className="section-title">المراقبة والأتمتة التلقائية للوكلاء (كل {scheduler?.intervalHours ?? 6} ساعات)</h2>
-          <div className="btn-row" style={{ marginTop: 0 }}>
-            <span className={scheduler?.active ? 'badge' : 'badge badge-muted'}>
-              {scheduler?.active ? `مجدول كل ${scheduler.intervalHours} ساعات` : 'جاهز للفحص'}
-            </span>
-            <button
-              className="btn btn-primary btn-sm"
-              type="button"
-              onClick={runComprehensiveSweep}
-              disabled={!canRun || sweepBusy}
-            >
-              {sweepBusy ? 'جارٍ الفحص الشامل…' : 'تشغيل فحص شامل الآن'}
-            </button>
-          </div>
-        </div>
-
-        {sweepError && <div className="alert alert-error">{sweepError}</div>}
-
-        <div className="grid grid-3" style={{ marginTop: '0.75rem' }}>
-          <div className="stat">
-            <span>آخر فحص شامل</span>
-            <strong style={{ fontSize: '1rem' }}>
-              {scheduler?.lastRunAt ? formatDate(scheduler.lastRunAt) : 'لم يُنفَّذ بعد'}
-            </strong>
-            {latestAudit?.triggerLabel && <span className="hint">{latestAudit.triggerLabel}</span>}
-          </div>
-          <div className="stat">
-            <span>الفحص المجدول القادم</span>
-            <strong style={{ fontSize: '1rem' }}>
-              {scheduler?.nextRunAt ? formatDate(scheduler.nextRunAt) : 'كل 6 ساعات'}
-            </strong>
-          </div>
-          <div className="stat">
-            <span>ملخص آخر تدقيق</span>
-            <strong style={{ fontSize: '1rem' }}>
-              {invAgent ? `${invAgent.alertsDetected} تنبيه / ${safetyAgent?.inventoryConflictsCount ?? 0} تداخل` : '—'}
-            </strong>
-            {invAgent && (
-              <span className="hint">
-                {`فُحص ${invAgent.medicinesScanned} دواءً و${invAgent.batchesScanned} دفعة`}
-              </span>
-            )}
-          </div>
-        </div>
-
-        {latestAudit && (
-          <div className="grid grid-3" style={{ marginTop: '0.9rem' }}>
-            <div className="stat" style={{ gap: '0.35rem' }}>
-              <span style={{ color: 'var(--accent)', fontWeight: 600 }}>1. وكيل إدارة المخزون وFEFO</span>
-              <span className="small">أدوية: {invAgent?.medicinesScanned ?? 0} | دفعات: {invAgent?.batchesScanned ?? 0}</span>
-              <span className="small">تنبيهات: {invAgent?.alertsDetected ?? 0} (جديد محفوظ: {invAgent?.persistedNewAlerts ?? 0})</span>
-              <span className="hint">أصناف جاهزة بترتيب FEFO: {invAgent?.fefoReadyMedicines ?? 0}</span>
-            </div>
-            <div className="stat" style={{ gap: '0.35rem' }}>
-              <span style={{ color: 'var(--accent)', fontWeight: 600 }}>2. وكيل سلامة الأدوية</span>
-              <span className="small">قاعدة التداخلات: {safetyAgent?.interactionsCatalogRows ?? 0} سجلًا</span>
-              <span className="small">تعارضات مكتشفة بالمخزون: {safetyAgent?.inventoryConflictsCount ?? 0}</span>
-              <span className="hint">تعارضات حرجة/شديدة: {safetyAgent?.criticalConflictsCount ?? 0}</span>
-            </div>
-            <div className="stat" style={{ gap: '0.35rem' }}>
-              <span style={{ color: 'var(--accent)', fontWeight: 600 }}>3. وكيل التحليل والتقارير</span>
-              <span className="small">حركات مفحوصة: {analyticsAgent?.movementsScanned ?? 0}</span>
-              <span className="small">قيمة البيع: {analyticsAgent?.sellingValue ?? 0}</span>
-              <span className="hint">خسارة منتهي الصلاحية: {analyticsAgent?.expiredCostLoss ?? 0}</span>
-            </div>
-          </div>
-        )}
-
-        {safetyAgent?.conflicts?.length > 0 && (
-          <div className="table-wrap" style={{ marginTop: '0.9rem' }}>
-            <table>
-              <thead>
-                <tr>
-                  <th>الدواء الأول بالمخزون</th>
-                  <th>الدواء الثاني بالمخزون</th>
-                  <th>الشدة</th>
-                  <th>تفاصيل التداخل</th>
-                </tr>
-              </thead>
-              <tbody>
-                {safetyAgent.conflicts.slice(0, 8).map((c, idx) => (
-                  <tr key={`${c.medicineA?.id}-${c.medicineB?.id}-${idx}`}>
-                    <td>{c.medicineA?.name ?? '—'}</td>
-                    <td>{c.medicineB?.name ?? '—'}</td>
-                    <td>
-                      <span className={c.severity === 'critical' || c.severity === 'high' ? 'badge badge-danger' : 'badge badge-warn'}>
-                        {c.severity ?? '—'}
-                      </span>
-                    </td>
-                    <td className="small">{c.description ?? `${c.drugA} + ${c.drugB}`}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-
-        {sweepData?.latest?.reportText && (
-          <div style={{ marginTop: '0.85rem' }}>
-            <button
-              className="btn btn-soft btn-sm"
-              type="button"
-              onClick={() => setShowSweepReport((v) => !v)}
-            >
-              {showSweepReport ? 'إخفاء تقرير الفحص التفصيلي' : 'عرض تقرير الفحص التفصيلي'}
-            </button>
-            {showSweepReport && (
-              <pre className="agent-answer" style={{ marginTop: '0.65rem' }}>
-                {sweepData.latest.reportText}
-              </pre>
-            )}
-          </div>
-        )}
-      </section>
+      <LiveAgentsMonitor
+        token={token}
+        canRun={canRun}
+        showDetails
+        onLiveSweep={loadRuns}
+      />
 
       <section className="card">
         <div className="card-head">

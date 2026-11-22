@@ -78,3 +78,105 @@ test('resolveEnumValue يختار القيمة المطابقة لقيود enum 
   assert.equal(resolveEnumValue(columns, 'reports', 'report_type', ['autonomous_audit', 'inventory_snapshot']), 'inventory_snapshot');
   assert.equal(resolveEnumValue(columns, 'reports', 'missing_col', ['autonomous_audit']), 'autonomous_audit');
 });
+
+test('resolveColumn يكتشف أعمدة drug_interactions باختلاف تسميتها أو حالة أحرفها', async () => {
+  const { resolveColumn } = await import('../server/schema.js');
+  const { COLUMN_CANDIDATES } = await import('../server/inventory.js');
+
+  const schemaA = {
+    ok: true,
+    tables: {
+      drug_interactions: {
+        columnNames: ['id', 'drug_1', 'drug_2', 'risk_level', 'clinical_effect'],
+      },
+    },
+  };
+  assert.equal(resolveColumn(schemaA, 'drug_interactions', COLUMN_CANDIDATES.drug_interactions.drugA), 'drug_1');
+  assert.equal(resolveColumn(schemaA, 'drug_interactions', COLUMN_CANDIDATES.drug_interactions.drugB), 'drug_2');
+  assert.equal(resolveColumn(schemaA, 'drug_interactions', COLUMN_CANDIDATES.drug_interactions.severity), 'risk_level');
+  assert.equal(resolveColumn(schemaA, 'drug_interactions', COLUMN_CANDIDATES.drug_interactions.description), 'clinical_effect');
+
+  const schemaB = {
+    ok: true,
+    tables: {
+      drug_interactions: {
+        columnNames: ['id', 'drugA', 'drugB', 'medicine_a_id'],
+      },
+    },
+  };
+  assert.equal(resolveColumn(schemaB, 'drug_interactions', COLUMN_CANDIDATES.drug_interactions.drugA), 'drugA');
+  assert.equal(resolveColumn(schemaB, 'drug_interactions', COLUMN_CANDIDATES.drug_interactions.drugB), 'drugB');
+
+  const schemaC = {
+    ok: true,
+    tables: {
+      drug_interactions: { columnNames: ['id', 'drug_a', 'drug_b', 'source_name'] },
+      medicines: { columnNames: ['id', 'brand_name', 'generic_name'] },
+    },
+  };
+  assert.equal(resolveColumn(schemaC, 'drug_interactions', COLUMN_CANDIDATES.drug_interactions.source), 'source_name');
+  assert.equal(resolveColumn(schemaC, 'medicines', COLUMN_CANDIDATES.medicines.name), 'brand_name');
+  assert.equal(resolveColumn(schemaC, 'medicines', COLUMN_CANDIDATES.medicines.scientificName), 'generic_name');
+});
+
+test('buildSeveritySchemePayloads يعيد تكييف عمود الخطورة حسب قيود CHECK دون المساس ببقية الحقول', async () => {
+  const { buildSeveritySchemePayloads } = await import('../server/routes/interactions.js');
+
+  const baseRows = [
+    { drug_a: 'Warfarin', drug_b: 'Aspirin', severity: 'critical', source_name: 'PharmaGuard' },
+    { drug_a: 'Metformin', drug_b: 'Contrast', severity: 'moderate', source_name: 'PharmaGuard' },
+    { drug_a: 'Calcium', drug_b: 'Zinc', severity: 'mild', source_name: 'PharmaGuard' },
+  ];
+  const buckets = ['high', 'medium', 'low'];
+
+  const highLowRows = buildSeveritySchemePayloads(baseRows, buckets, 'severity', {
+    high: 'high',
+    medium: 'medium',
+    low: 'low',
+  });
+  assert.deepEqual(
+    highLowRows.map((r) => r.severity),
+    ['high', 'medium', 'low'],
+  );
+  assert.equal(highLowRows[0].drug_a, 'Warfarin');
+  assert.equal(highLowRows[0].source_name, 'PharmaGuard');
+
+  const majorMinorRows = buildSeveritySchemePayloads(baseRows, buckets, 'severity', {
+    high: 'major',
+    medium: 'moderate',
+    low: 'minor',
+  });
+  assert.deepEqual(
+    majorMinorRows.map((r) => r.severity),
+    ['major', 'moderate', 'minor'],
+  );
+});
+
+test('computeAuditSignature يكشف تغير التنبيهات أو التعارضات ويبقى ثابتًا عند عدم التغيير', async () => {
+  const { computeAuditSignature, WATCH_INTERVAL_SECONDS_DEFAULT } = await import('../server/agentSweep.js');
+  assert.equal(WATCH_INTERVAL_SECONDS_DEFAULT, 30);
+
+  const baseAudit = {
+    agents: {
+      inventory_agent: { medicinesScanned: 10, batchesScanned: 15, fefoReadyMedicines: 8 },
+      safety_agent: {
+        interactionsCatalogRows: 15,
+        conflicts: [{ medicineA: { id: 'm1' }, medicineB: { id: 'm2' }, severity: 'critical' }],
+      },
+      analytics_agent: { movementsScanned: 5, inboundUnits: 50, outboundUnits: 10, costValue: 100, sellingValue: 150 },
+    },
+    summary: { units: { sellable: 40, expired: 0, total: 40 } },
+    alerts: [{ type: 'low_stock', severity: 'medium', medicineId: 'm1', batchId: null, units: 3 }],
+  };
+
+  const sig1 = computeAuditSignature(baseAudit);
+  const sig2 = computeAuditSignature(JSON.parse(JSON.stringify(baseAudit)));
+  assert.equal(sig1, sig2);
+
+  const changedAudit = JSON.parse(JSON.stringify(baseAudit));
+  changedAudit.alerts.push({ type: 'expired_batch', severity: 'high', medicineId: 'm2', batchId: 'b9', units: 2 });
+  const sig3 = computeAuditSignature(changedAudit);
+  assert.notEqual(sig1, sig3);
+});
+
+

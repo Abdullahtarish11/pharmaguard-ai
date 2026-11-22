@@ -27,6 +27,10 @@ export const env = {
     const parsed = Number(process.env.AGENT_SWEEP_INTERVAL_HOURS || 6);
     return Number.isFinite(parsed) && parsed >= 1 && parsed <= 24 ? parsed : 6;
   })(),
+  agentWatchIntervalSeconds: (() => {
+    const parsed = Number(process.env.AGENT_WATCH_INTERVAL_SECONDS || 30);
+    return Number.isFinite(parsed) && parsed >= 10 && parsed <= 3600 ? Math.trunc(parsed) : 30;
+  })(),
 };
 
 /** الحالة العامة للتكوين — لا تحتوي أي قيمة سرية. */
@@ -38,6 +42,7 @@ export function configState() {
     bootstrapTokenPresent: Boolean(env.bootstrapToken),
     agentCronSecretPresent: Boolean(env.agentCronSecret),
     agentSweepIntervalHours: env.agentSweepIntervalHours,
+    agentWatchIntervalSeconds: env.agentWatchIntervalSeconds,
     ready: Boolean(env.supabaseUrl && env.anonKey && env.serviceRoleKey),
   };
 }

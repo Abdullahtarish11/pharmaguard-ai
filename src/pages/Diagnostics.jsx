@@ -124,17 +124,20 @@ export default function Diagnostics() {
                 </tr>
               </thead>
               <tbody>
-                {report.tables.map((table) => (
-                  <tr key={table.name}>
-                    <td dir="ltr">{table.name}</td>
-                    <td>{table.exists === null ? '—' : table.exists ? 'نعم' : 'لا'}</td>
-                    <td>{table.columnCount}</td>
-                    <td>{table.rowCount ?? '—'}</td>
-                    <td className="small" dir="ltr">
-                      {table.error || '—'}
-                    </td>
-                  </tr>
-                ))}
+                {report.tables.map((table) => {
+                  const colNames = report.schema?.tables?.[table.name]?.columnNames ?? [];
+                  return (
+                    <tr key={table.name}>
+                      <td dir="ltr">{table.name}</td>
+                      <td>{table.exists === null ? '—' : table.exists ? 'نعم' : 'لا'}</td>
+                      <td>{table.columnCount}</td>
+                      <td>{table.rowCount ?? '—'}</td>
+                      <td className="small" dir="ltr">
+                        {table.error || (colNames.length ? colNames.join(', ') : '—')}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

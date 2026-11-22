@@ -5,6 +5,7 @@ import { useApp } from '../context.jsx';
 import { SELF_REGISTER_ROLES, roleLabel } from '../labels.js';
 import CompleteProfile from './CompleteProfile.jsx';
 import ExpiryAlertsPanel from '../components/ExpiryAlertsPanel.jsx';
+import LiveAgentsMonitor from '../components/LiveAgentsMonitor.jsx';
 
 export default function Dashboard() {
   const { me, meError, session, config } = useApp();
@@ -13,7 +14,6 @@ export default function Dashboard() {
   const [summary, setSummary] = useState(null);
   const [alertsList, setAlertsList] = useState([]);
   const [alertCounts, setAlertCounts] = useState(null);
-  const [sweepStatus, setSweepStatus] = useState(null);
   const [error, setError] = useState(null);
   const [notice, setNotice] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -23,6 +23,7 @@ export default function Dashboard() {
   const isOwner = me?.role === 'owner';
   const hasProfile = me?.hasProfile === true;
   const isLinked = Boolean(me?.pharmacyId);
+  const canRunAgents = me?.role === 'owner' || me?.role === 'pharmacist' || me?.role === 'inventory_manager';
 
   const loadDashboardData = useCallback(async () => {
     if (!token || !hasProfile) return;
@@ -43,13 +44,12 @@ export default function Dashboard() {
         tasks.push(
           api.reportSummary(token).catch(() => null),
           api.alerts(token).catch(() => null),
-          api.agentSweepLatest(token).catch(() => null),
         );
       } else {
-        tasks.push(Promise.resolve(null), Promise.resolve(null), Promise.resolve(null));
+        tasks.push(Promise.resolve(null), Promise.resolve(null));
       }
 
-      const [diagnostics, staffList, summaryData, alertsData, sweepData] = await Promise.all(tasks);
+      const [diagnostics, staffList, summaryData, alertsData] = await Promise.all(tasks);
       if (isOwner) {
         setReport(diagnostics);
         setStaff(staffList);
@@ -57,7 +57,6 @@ export default function Dashboard() {
       setSummary(summaryData?.summary ?? null);
       setAlertsList(Array.isArray(alertsData?.alerts) ? alertsData.alerts : []);
       setAlertCounts(alertsData?.counts ? { total: alertsData.total, ...alertsData.counts } : null);
-      setSweepStatus(sweepData);
     } finally {
       setBusy(false);
     }
@@ -125,6 +124,14 @@ export default function Dashboard() {
 
   return (
     <div className="grid">
+      {isLinked && (
+        <LiveAgentsMonitor
+          token={token}
+          canRun={canRunAgents}
+          onLiveSweep={loadDashboardData}
+        />
+      )}
+
       {isLinked && (
         <ExpiryAlertsPanel
           summary={summary}

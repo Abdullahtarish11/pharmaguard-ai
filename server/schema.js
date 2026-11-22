@@ -126,8 +126,16 @@ export function tableExists(schema, table) {
 export function resolveColumn(schema, table, candidates) {
   if (!schema?.ok) return candidates[0] ?? null;
   const names = schema.tables?.[table]?.columnNames ?? [];
+  const normalize = (value) => String(value).toLowerCase().replace(/[^a-z0-9\u0600-\u06ff]/g, '');
+  const normalizedMap = new Map();
+  for (const name of names) {
+    const key = normalize(name);
+    if (!normalizedMap.has(key)) normalizedMap.set(key, name);
+  }
   for (const candidate of candidates) {
     if (names.includes(candidate)) return candidate;
+    const matched = normalizedMap.get(normalize(candidate));
+    if (matched) return matched;
   }
   return null;
 }

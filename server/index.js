@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { env, configState, missingConfigKeys } from './env.js';
 import { getAdmin, isPublicConfigured } from './supabase.js';
 import { inventoryColumns } from './inventory.js';
-import { startAutonomousAgentScheduler } from './agentSweep.js';
+import { registerAgentRuntime, startAutonomousAgentScheduler } from './agentSweep.js';
 import { ROLE_LABELS, SELF_REGISTER_ROLES } from './roles.js';
 import bootstrapRouter from './routes/bootstrap.js';
 import authRouter from './routes/auth.js';
@@ -26,7 +26,7 @@ const sqlFile = path.resolve(here, '..', 'supabase', 'apply_all.sql');
 
 const app = express();
 app.disable('x-powered-by');
-app.use(express.json({ limit: '100kb' }));
+app.use(express.json({ limit: '2mb' }));
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Referrer-Policy', 'no-referrer');
@@ -131,14 +131,16 @@ app.listen(env.port, '0.0.0.0', () => {
   console.log(`[pharmaguard] anon key: ${state.anonKeyPresent ? 'set' : 'missing'}`);
   console.log(`[pharmaguard] service_role: ${state.serviceRolePresent ? 'set' : 'missing'}`);
   console.log(`[pharmaguard] bootstrap token: ${state.bootstrapTokenPresent ? 'set' : 'missing'}`);
+  registerAgentRuntime({ getAdmin, inventoryColumns });
   if (process.env.DISABLE_AGENT_SCHEDULER !== '1') {
     const sched = startAutonomousAgentScheduler({
       getAdmin,
       inventoryColumns,
+      watchIntervalSeconds: env.agentWatchIntervalSeconds,
       intervalHours: env.agentSweepIntervalHours,
     });
     if (sched.started) {
-      console.log(`[pharmaguard] autonomous agents scheduler active (every ${sched.intervalHours}h)`);
+      console.log(`[pharmaguard] continuous autonomous agents active (every ${sched.watchIntervalSeconds}s + reactive hooks)`);
     }
   }
 });

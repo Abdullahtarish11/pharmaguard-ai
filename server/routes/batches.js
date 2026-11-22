@@ -17,6 +17,7 @@ import {
   sortBatchesFefo,
   findFefoBlockingBatch,
 } from '../inventory.js';
+import { notifyInventoryChange } from '../agentSweep.js';
 
 const router = express.Router();
 
@@ -228,6 +229,7 @@ router.post(
       if (movement.error) movementNote = `تم إنشاء الدفعة، لكن تعذّر تسجيل حركة الاستلام: ${movement.error.message}`;
     }
 
+    notifyInventoryChange(scope.pharmacyId, 'إضافة دفعة جديدة');
     return res.status(201).json({
       ok: true,
       batch: shapeBatch(created, cols),
@@ -291,6 +293,7 @@ router.patch(
     if (error) return httpError(res, 500, 'batch_update_failed', error.message);
     if (!data?.length) return httpError(res, 404, 'batch_not_found', 'الدفعة غير موجودة.');
 
+    notifyInventoryChange(scope.pharmacyId, 'تحديث بيانات دفعة');
     return res.json({ ok: true, batch: shapeBatch(data[0], cols) });
   }),
 );
@@ -421,6 +424,7 @@ router.post(
       return httpError(res, 500, 'movement_insert_failed', inserted.error.message);
     }
 
+    notifyInventoryChange(batchScope.pharmacyId, `تسجيل حركة (${type})`);
     return res.json({
       ok: true,
       batch: shapeBatch(update.data?.[0], cols),

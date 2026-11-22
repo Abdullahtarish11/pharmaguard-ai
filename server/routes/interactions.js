@@ -4,19 +4,39 @@ import { requireUser, requireRole } from '../auth.js';
 import { ROLE } from '../roles.js';
 import { asyncHandler, httpError, isNonEmptyString } from '../util.js';
 import { inventoryColumns, payloadFor, requirePharmacy, scopeToPharmacy } from '../inventory.js';
+import { notifyInventoryChange } from '../agentSweep.js';
 
 const router = express.Router();
 
+function severityBucket(raw) {
+  const value = String(raw ?? '').trim().toLowerCase();
+  if (/critical|high|severe|major|contraindicated|شديد|حرج/.test(value)) return 'high';
+  if (/mild_to_moderate|moderate|medium|متوسط/.test(value)) return 'medium';
+  if (/mild|low|minor|طفيف|منخفض/.test(value)) return 'low';
+  return 'medium';
+}
+
+const SEVERITY_SCHEMES = Object.freeze([
+  { high: 'high', medium: 'medium', low: 'low' },
+  { high: 'critical', medium: 'medium', low: 'low' },
+  { high: 'high', medium: 'moderate', low: 'low' },
+  { high: 'critical', medium: 'moderate', low: 'low' },
+  { high: 'major', medium: 'moderate', low: 'minor' },
+  { high: 'severe', medium: 'moderate', low: 'mild' },
+  { high: 'severe', medium: 'moderate', low: 'minor' },
+  { high: 'high', medium: 'moderate', low: 'minor' },
+  { high: 'HIGH', medium: 'MEDIUM', low: 'LOW' },
+  { high: 'CRITICAL', medium: 'MODERATE', low: 'MILD' },
+  { high: 'MAJOR', medium: 'MODERATE', low: 'MINOR' },
+  { high: 'HIGH', medium: 'MODERATE', low: 'LOW' },
+  { high: 'CRITICAL', medium: 'MODERATE', low: 'LOW' },
+  { high: 'حرج', medium: 'متوسط', low: 'طفيف' },
+  { high: 'شديد', medium: 'متوسط', low: 'خفيف' },
+]);
+
 function normalizeSeverity(raw, enumValues) {
   const value = String(raw ?? '').trim().toLowerCase();
-  const bucket =
-    /critical|high|severe|major|شديد|حرج/.test(value)
-      ? 'high'
-      : /mild_to_moderate|moderate|medium|متوسط/.test(value)
-        ? 'medium'
-        : /mild|low|minor|طفيف|منخفض/.test(value)
-          ? 'low'
-          : value || 'medium';
+  const bucket = severityBucket(value);
 
   if (Array.isArray(enumValues) && enumValues.length > 0) {
     const exact = enumValues.find((item) => String(item).toLowerCase() === value);
@@ -35,6 +55,13 @@ function normalizeSeverity(raw, enumValues) {
   }
 
   return value || 'moderate';
+}
+
+export function buildSeveritySchemePayloads(toInsert, buckets, severityColumn, scheme) {
+  return toInsert.map((row, index) => ({
+    ...row,
+    [severityColumn]: scheme[buckets[index] ?? 'medium'],
+  }));
 }
 
 function pairKey(a, b) {
@@ -107,13 +134,21 @@ router.post(
 
     const cols = columns.interactions;
     if (!cols.drugA || !cols.drugB) {
+      const detectedCols = columns.tables?.drug_interactions?.columnNames ?? [];
+      const colsHint = detectedCols.length ? ` الأعمدة الموجودة فعليًا: ${detectedCols.join(', ')}` : '';
       return httpError(
         res,
         400,
         'interaction_columns_missing',
-        'لم يُعثر على عمودَي الدواء الأول والثاني في جدول drug_interactions.',
+        `لم يُعثر على عمودَي الدواء الأول والثاني في جدول drug_interactions.${colsHint}`,
+        { detectedColumns: detectedCols },
       );
     }
+
+    const colMetaA = columns.tables?.drug_interactions?.columns?.find((c) => c.name === cols.drugA);
+    const colMetaB = columns.tables?.drug_interactions?.columns?.find((c) => c.name === cols.drugB);
+    const isUuidA = colMetaA?.type === 'uuid' || colMetaA?.foreignKey === true || cols.drugA.endsWith('_id');
+    const isUuidB = colMetaB?.type === 'uuid' || colMetaB?.foreignKey === true || cols.drugB.endsWith('_id');
 
     let pharmacyId = null;
     if (cols.pharmacy) {
@@ -121,6 +156,33 @@ router.post(
       if (!scope.ok) return httpError(res, scope.status, scope.code, scope.message);
       pharmacyId = scope.pharmacyId;
     }
+
+    let medicineLookup = [];
+    if (isUuidA || isUuidB) {
+      const medCols = columns.medicines;
+      let medQuery = admin.from('medicines').select('*').limit(2000);
+      medQuery = scopeToPharmacy(medQuery, columns, 'medicines', req.auth.profile);
+      const medRes = await medQuery;
+      if (!medRes.error && Array.isArray(medRes.data)) {
+        medicineLookup = medRes.data.map((row) => ({
+          id: row[medCols.id],
+          name: String(row[medCols.name] ?? '').toLowerCase(),
+          scientificName: String(medCols.scientificName ? row[medCols.scientificName] ?? '' : '').toLowerCase(),
+        }));
+      }
+    }
+
+    const resolveDrugValue = (rawLabel, needsUuid) => {
+      if (!needsUuid) return rawLabel;
+      const lower = String(rawLabel ?? '').toLowerCase();
+      for (const med of medicineLookup) {
+        if (!med.id) continue;
+        if (med.name && med.name.length >= 2 && lower.includes(med.name)) return med.id;
+        const sciTokens = med.scientificName.split(/[\s/+()،,-]+/).filter((t) => t.length >= 3);
+        if (sciTokens.some((tok) => lower.includes(tok))) return med.id;
+      }
+      return null;
+    };
 
     let existingQuery = admin.from('drug_interactions').select(`${cols.drugA},${cols.drugB}`).limit(2000);
     if (cols.pharmacy && pharmacyId) {
@@ -141,8 +203,17 @@ router.post(
       cols.severity &&
       columns.tables?.drug_interactions?.columns?.find((col) => col.name === cols.severity);
     const severityEnum = severityMeta?.enumValues ?? null;
+    const sourceMeta =
+      cols.source &&
+      columns.tables?.drug_interactions?.columns?.find((col) => col.name === cols.source);
+    const sourceRequired = Boolean(sourceMeta?.required);
+    const descMeta =
+      cols.description &&
+      columns.tables?.drug_interactions?.columns?.find((col) => col.name === cols.description);
+    const descRequired = Boolean(descMeta?.required);
 
     const toInsert = [];
+    const insertBuckets = [];
     let skippedCount = 0;
 
     for (const item of items) {
@@ -150,9 +221,13 @@ router.post(
         skippedCount += 1;
         continue;
       }
-      const drugA = String(item.drugA).trim();
-      const drugB = String(item.drugB).trim();
-      const key = pairKey(drugA, drugB);
+      const drugAVal = resolveDrugValue(String(item.drugA).trim(), isUuidA);
+      const drugBVal = resolveDrugValue(String(item.drugB).trim(), isUuidB);
+      if (!drugAVal || !drugBVal) {
+        skippedCount += 1;
+        continue;
+      }
+      const key = pairKey(drugAVal, drugBVal);
       if (seen.has(key)) {
         skippedCount += 1;
         continue;
@@ -160,23 +235,32 @@ router.post(
       seen.add(key);
 
       const desired = {
-        [cols.drugA]: drugA,
-        [cols.drugB]: drugB,
+        [cols.drugA]: drugAVal,
+        [cols.drugB]: drugBVal,
       };
       if (cols.severity) {
         desired[cols.severity] = normalizeSeverity(item.severity, severityEnum);
       }
-      if (cols.description && isNonEmptyString(item.description)) {
-        desired[cols.description] = String(item.description).trim();
+      if (cols.description) {
+        if (isNonEmptyString(item.description)) {
+          desired[cols.description] = String(item.description).trim();
+        } else if (descRequired) {
+          desired[cols.description] = 'تداخل دوائي مسجّل';
+        }
       }
-      if (cols.source && isNonEmptyString(item.source)) {
-        desired[cols.source] = String(item.source).trim();
+      if (cols.source) {
+        if (isNonEmptyString(item.source)) {
+          desired[cols.source] = String(item.source).trim();
+        } else if (sourceRequired) {
+          desired[cols.source] = 'PharmaGuard Import';
+        }
       }
       if (cols.pharmacy && pharmacyId) {
         desired[cols.pharmacy] = pharmacyId;
       }
 
       toInsert.push(payloadFor(columns, 'drug_interactions', desired));
+      insertBuckets.push(severityBucket(item.severity));
     }
 
     if (toInsert.length === 0) {
@@ -185,13 +269,38 @@ router.post(
         insertedCount: 0,
         skippedCount,
         interactions: [],
-        message: 'جميع التداخلات المحددة مسجّلة مسبقًا في جدول drug_interactions.',
+        message:
+          isUuidA || isUuidB
+            ? 'لم تُطابق التداخلات مع أدوية مسجّلة بعد أو أنها مسجّلة مسبقًا. أضف/استورد الأدوية أولًا.'
+            : 'جميع التداخلات المحددة مسجّلة مسبقًا في جدول drug_interactions.',
       });
     }
 
-    const { data, error } = await admin.from('drug_interactions').insert(toInsert).select();
+    let { data, error } = await admin.from('drug_interactions').insert(toInsert).select();
+    const isSeverityCheckError = (err) =>
+      Boolean(
+        err &&
+          cols.severity &&
+          (err.code === '23514' || /severity_check|violates check constraint/i.test(String(err.message ?? ''))),
+      );
+
+    if (isSeverityCheckError(error)) {
+      for (const scheme of SEVERITY_SCHEMES) {
+        const adapted = buildSeveritySchemePayloads(toInsert, insertBuckets, cols.severity, scheme);
+        const attempt = await admin.from('drug_interactions').insert(adapted).select();
+        if (!attempt.error) {
+          data = attempt.data;
+          error = null;
+          break;
+        }
+        error = attempt.error;
+        if (!isSeverityCheckError(error)) break;
+      }
+    }
+
     if (error) return httpError(res, 500, 'interactions_import_failed', error.message);
 
+    notifyInventoryChange(pharmacyId, `استيراد ${data?.length ?? toInsert.length} تداخل دوائي`);
     return res.status(201).json({
       ok: true,
       insertedCount: data?.length ?? toInsert.length,

@@ -12,6 +12,7 @@ import {
   requirePharmacy,
   aggregateStock,
 } from '../inventory.js';
+import { notifyInventoryChange } from '../agentSweep.js';
 
 const router = express.Router();
 
@@ -120,7 +121,15 @@ router.post(
 
     const cols = columns.medicines;
     if (!cols.name) {
-      return httpError(res, 400, 'name_column_missing', 'لم يُعثر على عمود اسم الدواء في جدول medicines.');
+      const detectedCols = columns.tables?.medicines?.columnNames ?? [];
+      const colsHint = detectedCols.length ? ` الأعمدة الموجودة فعليًا: ${detectedCols.join(', ')}` : '';
+      return httpError(
+        res,
+        400,
+        'name_column_missing',
+        `لم يُعثر على عمود اسم الدواء في جدول medicines.${colsHint}`,
+        { detectedColumns: detectedCols },
+      );
     }
 
     const desired = {
@@ -148,6 +157,7 @@ router.post(
     const { data, error } = await admin.from('medicines').insert(payload).select().limit(1);
     if (error) return httpError(res, 500, 'medicine_insert_failed', error.message);
 
+    notifyInventoryChange(scope.pharmacyId, 'إضافة دواء جديد');
     return res.status(201).json({ ok: true, medicine: shapeMedicine(data?.[0], cols) });
   }),
 );
@@ -180,7 +190,15 @@ router.post(
 
     const cols = columns.medicines;
     if (!cols.name) {
-      return httpError(res, 400, 'name_column_missing', 'لم يُعثر على عمود اسم الدواء في جدول medicines.');
+      const detectedCols = columns.tables?.medicines?.columnNames ?? [];
+      const colsHint = detectedCols.length ? ` الأعمدة الموجودة فعليًا: ${detectedCols.join(', ')}` : '';
+      return httpError(
+        res,
+        400,
+        'name_column_missing',
+        `لم يُعثر على عمود اسم الدواء في جدول medicines.${colsHint}`,
+        { detectedColumns: detectedCols },
+      );
     }
 
     let existingQuery = admin.from('medicines').select(cols.name).limit(2000);
@@ -245,6 +263,7 @@ router.post(
     const { data, error } = await admin.from('medicines').insert(toInsert).select();
     if (error) return httpError(res, 500, 'medicines_import_failed', error.message);
 
+    notifyInventoryChange(scope.pharmacyId, `استيراد ${data?.length ?? toInsert.length} دواءً`);
     return res.status(201).json({
       ok: true,
       insertedCount: data?.length ?? toInsert.length,
@@ -303,6 +322,7 @@ router.patch(
     if (error) return httpError(res, 500, 'medicine_update_failed', error.message);
     if (!data?.length) return httpError(res, 404, 'medicine_not_found', 'الدواء غير موجود.');
 
+    notifyInventoryChange(scope.pharmacyId, 'تحديث بيانات دواء');
     return res.json({ ok: true, medicine: shapeMedicine(data[0], cols) });
   }),
 );

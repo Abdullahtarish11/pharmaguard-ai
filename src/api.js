@@ -70,4 +70,71 @@ export const api = {
   agentRuns: (token) => request('/agent/runs', { token }),
   agentSweepLatest: (token) => request('/agent/sweep/latest', { token }),
   runAgentSweep: (token) => request('/agent/sweep', { method: 'POST', token }),
+  subscribeAgentStream: (token, { onEvent, onStatusChange } = {}) => {
+    if (!token) return () => {};
+    let closed = false;
+    let controller = null;
+    let reconnectTimer = null;
+
+    const connect = async () => {
+      if (closed) return;
+      controller = new AbortController();
+      onStatusChange?.('connecting');
+      try {
+        const response = await fetch(`${BASE}/agent/stream`, {
+          headers: { Authorization: `Bearer ${token}`, Accept: 'text/event-stream' },
+          signal: controller.signal,
+        });
+        if (!response.ok || !response.body) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+        onStatusChange?.('connected');
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (!closed) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const frames = buffer.split(/\r?\n\r?\n/);
+          buffer = frames.pop() ?? '';
+
+          for (const frame of frames) {
+            if (!frame.trim() || frame.startsWith(':')) continue;
+            let eventName = 'message';
+            const dataLines = [];
+            for (const line of frame.split(/\r?\n/)) {
+              if (line.startsWith('event:')) eventName = line.slice(6).trim();
+              else if (line.startsWith('data:')) dataLines.push(line.slice(5).trim());
+            }
+            if (dataLines.length > 0) {
+              const raw = dataLines.join('\n');
+              try {
+                onEvent?.(eventName, JSON.parse(raw));
+              } catch {
+                // تجاهل الإطار غير المكتمل
+              }
+            }
+          }
+        }
+      } catch {
+        // إعادة الاتصال تلقائيًا عند انقطاع البث
+      }
+
+      if (!closed) {
+        onStatusChange?.('reconnecting');
+        reconnectTimer = setTimeout(connect, 3000);
+      }
+    };
+
+    connect();
+
+    return () => {
+      closed = true;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      controller?.abort();
+    };
+  },
 };

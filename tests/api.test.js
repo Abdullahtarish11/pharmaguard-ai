@@ -122,6 +122,7 @@ test('المسارات المحمية ترفض الطلبات بدون جلسة'
     ['POST', '/api/reports'],
     ['POST', '/api/agent/ask', { question: 'ما حالة المخزون؟' }],
     ['GET', '/api/agent/runs'],
+    ['GET', '/api/agent/stream'],
     ['GET', '/api/agent/sweep/latest'],
     ['POST', '/api/agent/sweep'],
   ]) {

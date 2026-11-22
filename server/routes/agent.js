@@ -7,8 +7,10 @@ import { ROLE } from '../roles.js';
 import { asyncHandler, httpError, isNonEmptyString } from '../util.js';
 import {
   getLatestSweepForPharmacy,
+  getLiveFeedForPharmacy,
   getSchedulerState,
   runAutonomousSweep,
+  subscribeAgentEvents,
 } from '../agentSweep.js';
 import {
   inventoryColumns,
@@ -204,8 +206,28 @@ export async function interactionsFor(admin, columns, text, medicineOrList, allM
   const { groups, scanInventory } = extractDrugSearchGroups(text, matchedMedicines, allMedicines);
   const flatTerms = [...new Set(groups.flat())].slice(0, 12);
 
+  const colMetaA = columns.tables?.drug_interactions?.columns?.find((c) => c.name === cols.drugA);
+  const colMetaB = columns.tables?.drug_interactions?.columns?.find((c) => c.name === cols.drugB);
+  const isUuidA = Boolean(cols.drugA && (colMetaA?.type === 'uuid' || colMetaA?.foreignKey === true || cols.drugA.endsWith('_id')));
+  const isUuidB = Boolean(cols.drugB && (colMetaB?.type === 'uuid' || colMetaB?.foreignKey === true || cols.drugB.endsWith('_id')));
+  const medLabelById = new Map(
+    (allMedicines ?? [])
+      .filter((m) => m?.id != null)
+      .map((m) => [String(m.id), [m.name, m.scientificName].filter(Boolean).join(' ') || String(m.id)]),
+  );
+
   let query = admin.from('drug_interactions').select('*').limit(200);
-  if (flatTerms.length > 0 && (cols.drugA || cols.drugB)) {
+  if (isUuidA || isUuidB) {
+    const ids = matchedMedicines.map((m) => m?.id).filter(Boolean).slice(0, 12);
+    if (ids.length > 0) {
+      const clauses = [];
+      for (const id of ids) {
+        if (cols.drugA && isUuidA) clauses.push(`${cols.drugA}.eq.${id}`);
+        if (cols.drugB && isUuidB) clauses.push(`${cols.drugB}.eq.${id}`);
+      }
+      if (clauses.length > 0) query = query.or(clauses.join(','));
+    }
+  } else if (flatTerms.length > 0 && (cols.drugA || cols.drugB)) {
     const clauses = [];
     for (const term of flatTerms) {
       if (cols.drugA) clauses.push(`${cols.drugA}.ilike.%${term}%`);
@@ -219,9 +241,15 @@ export async function interactionsFor(admin, columns, text, medicineOrList, allM
     return { available: false, rows: [], pairMatches: [], reason: result.error.message };
   }
 
+  const mapDrugVal = (raw, isUuid) => {
+    if (raw == null) return null;
+    const str = String(raw);
+    return isUuid && medLabelById.has(str) ? medLabelById.get(str) : raw;
+  };
+
   const rows = (result.data ?? []).map((row) => ({
-    drugA: cols.drugA ? row[cols.drugA] ?? null : null,
-    drugB: cols.drugB ? row[cols.drugB] ?? null : null,
+    drugA: cols.drugA ? mapDrugVal(row[cols.drugA], isUuidA) : null,
+    drugB: cols.drugB ? mapDrugVal(row[cols.drugB], isUuidB) : null,
     severity: cols.severity ? row[cols.severity] ?? null : null,
     description: cols.description ? row[cols.description] ?? null : null,
     source: cols.source ? row[cols.source] ?? null : null,
@@ -678,7 +706,47 @@ router.get(
   }),
 );
 
-/** حالة وآخر نتيجة للفحص التلقائي الشامل (كل 6 ساعات) لصيدلية المستخدم. */
+/** بث مباشر (SSE) لحالة الوكلاء الثلاثة ونتائج الفحص أولًا بأول لصيدلية المستخدم. */
+router.get(
+  '/stream',
+  requireUser,
+  requireRole(ROLE.OWNER, ROLE.PHARMACIST, ROLE.INVENTORY),
+  asyncHandler(async (req, res) => {
+    const admin = getAdmin();
+    if (!admin) return httpError(res, 503, 'supabase_not_configured', 'لم تُضف مفاتيح Supabase بعد.');
+
+    const columns = await inventoryColumns();
+    const scope = requirePharmacy(columns, 'medicines', req.auth.profile);
+    if (!scope.ok) return httpError(res, scope.status, scope.code, scope.message);
+
+    res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.flushHeaders?.();
+
+    const send = (eventName, payload) => {
+      if (res.writableEnded) return;
+      res.write(`event: ${eventName}\ndata: ${JSON.stringify(payload)}\n\n`);
+    };
+
+    const initial = await getLatestSweepForPharmacy(admin, columns, scope.pharmacyId);
+    send('init', initial);
+
+    const unsubscribe = subscribeAgentEvents(scope.pharmacyId, send);
+    const heartbeat = setInterval(() => {
+      if (!res.writableEnded) res.write(': keepalive\n\n');
+    }, 20_000);
+    heartbeat.unref?.();
+
+    req.on('close', () => {
+      clearInterval(heartbeat);
+      unsubscribe();
+    });
+  }),
+);
+
+/** حالة وآخر نتيجة للفحص التلقائي المستمر لصيدلية المستخدم. */
 router.get(
   '/sweep/latest',
   requireUser,
@@ -714,13 +782,16 @@ router.post(
       columns,
       pharmacyId: scope.pharmacyId,
       trigger: 'manual',
+      reason: 'فحص فوري بطلب المستخدم',
       triggeredBy: req.auth.user.id,
+      forcePersist: true,
     });
 
     const first = sweep.results[0] ?? null;
     return res.json({
       ok: true,
       scheduler: getSchedulerState(),
+      liveFeed: getLiveFeedForPharmacy(scope.pharmacyId),
       latest: first
         ? {
             source: 'live',

@@ -101,8 +101,10 @@ function Header() {
             <Link
               className={location.pathname === '/app/agent' ? 'nav-link active' : 'nav-link'}
               to="/app/agent"
+              style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}
             >
-              الوكيل
+              <span className="dot-live" />
+              الوكلاء (حي)
             </Link>
             <Link
               className={location.pathname === '/app/diagnostics' ? 'nav-link active' : 'nav-link'}
