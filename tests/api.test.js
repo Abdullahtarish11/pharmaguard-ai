@@ -34,6 +34,8 @@ before(async () => {
       SUPABASE_ANON_KEY: '',
       SUPABASE_SERVICE_ROLE_KEY: '',
       OWNER_BOOTSTRAP_TOKEN: '',
+      OPENSERP_URL: '',
+      SEARXNG_URL: '   ',
     },
     stdio: 'ignore',
   });
@@ -51,6 +53,9 @@ test('الصحة تُبلّغ عن نقص الإعدادات بدون أي قي�
   const body = await response.json();
   assert.equal(body.ok, true);
   assert.equal(body.service, 'pharmaguard-ai');
+  assert.equal(body.config.openserpConfigured, false);
+  assert.equal(body.config.searxngConfigured, false);
+  assert.equal(body.config.webSearchStatus, 'not_configured');
   assert.deepEqual(body.missing.sort(), [
     'SUPABASE_ANON_KEY',
     'SUPABASE_SERVICE_ROLE_KEY',

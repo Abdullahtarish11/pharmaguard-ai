@@ -144,6 +144,72 @@ export default function Diagnostics() {
         </div>
       )}
 
+      {report?.safetyStorageCompat?.tables?.length > 0 && (
+        <div className="card">
+          <div className="card-head">
+            <h2 className="section-title">توافق جداول تخزين الوكيل (agent_runs / reports / inventory_alerts)</h2>
+            <span className={report.safetyStorageCompat.allCompatible ? 'badge' : 'badge badge-warn'}>
+              {report.safetyStorageCompat.allCompatible ? 'الأعمدة متوافقة' : 'يتطلب مراجعة'}
+            </span>
+          </div>
+          <div className="grid">
+            {report.safetyStorageCompat.tables.map((tbl) => (
+              <div key={tbl.table} className="stat" style={{ gap: '0.5rem' }}>
+                <div className="card-head" style={{ marginBottom: 0 }}>
+                  <strong dir="ltr" style={{ fontSize: '0.96rem' }}>{tbl.table}</strong>
+                  <span className={tbl.compatible ? 'badge' : 'badge badge-warn'}>
+                    {tbl.compatible ? 'جاهز دون تعديل' : 'تحقق من الإلزامية'}
+                  </span>
+                </div>
+                <div className="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>العمود</th>
+                        <th>النوع</th>
+                        <th>إلزامي</th>
+                        <th>القيود / القيم المسموحة</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {tbl.columns.map((col) => (
+                        <tr key={col.name}>
+                          <td dir="ltr">{col.name}</td>
+                          <td dir="ltr">{col.type}</td>
+                          <td>{col.required ? 'NOT NULL' : 'اختياري'}</td>
+                          <td dir="ltr" className="small">
+                            {[
+                              col.primaryKey ? 'PK' : null,
+                              col.foreignKey ? 'FK' : null,
+                              col.enumValues?.length ? `ENUM(${col.enumValues.join(', ')})` : null,
+                            ]
+                              .filter(Boolean)
+                              .join(' • ') || '—'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                {tbl.notes?.map((note, idx) => (
+                  <p key={idx} className="muted small" style={{ margin: 0 }}>{note}</p>
+                ))}
+              </div>
+            ))}
+          </div>
+          {report.safetyStorageCompat.sqlInspectionQuery && (
+            <details style={{ marginTop: '0.8rem' }}>
+              <summary className="small" style={{ cursor: 'pointer', fontWeight: 600 }}>
+                استعلام SQL قرائي لفحص قيود CHECK في محرر Supabase (دون أي تعديل)
+              </summary>
+              <pre className="code" style={{ marginTop: '0.5rem' }}>
+                {report.safetyStorageCompat.sqlInspectionQuery}
+              </pre>
+            </details>
+          )}
+        </div>
+      )}
+
       <section className="grid grid-2">
         <div className="card">
           <div className="card-head">

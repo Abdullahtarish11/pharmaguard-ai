@@ -3,6 +3,8 @@ import { env, configState, missingConfigKeys } from '../env.js';
 import { getAdmin, getAnonClient, getUserClient, isAdminReady } from '../supabase.js';
 import { requireUser, requireRole } from '../auth.js';
 import { TABLES, TABLE_LABELS, getSchema, clearSchemaCache } from '../schema.js';
+import { inventoryColumns } from '../inventory.js';
+import { inspectSafetyStorageCompatibility } from '../safety/storageCompat.js';
 import { ROLE } from '../roles.js';
 import { asyncHandler, httpError, withTimeout } from '../util.js';
 
@@ -37,6 +39,8 @@ router.get(
     const admin = getAdmin();
     clearSchemaCache();
     const schema = await getSchema(true);
+    const invCols = await inventoryColumns(false);
+    const safetyStorageCompat = inspectSafetyStorageCompatibility(invCols);
 
     const report = {
       checkedAt: new Date().toISOString(),
@@ -56,6 +60,7 @@ router.get(
       rls: {},
       write: {},
       permissions: {},
+      safetyStorageCompat,
     };
 
     // 1) الاتصال والقراءة بمفتاح الخدمة

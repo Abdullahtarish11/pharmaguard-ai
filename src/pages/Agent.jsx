@@ -3,6 +3,7 @@ import { api } from '../api.js';
 import { useApp } from '../context.jsx';
 import { formatDate } from '../labels.js';
 import LiveAgentsMonitor from '../components/LiveAgentsMonitor.jsx';
+import SafetyResearchPanel from '../components/SafetyResearchPanel.jsx';
 
 const AGENT_GROUPS = [
   {
@@ -18,7 +19,7 @@ const AGENT_GROUPS = [
     agent: 'وكيل سلامة الأدوية',
     questions: [
       'فحص تداخلات المخزون الحالية',
-      'هل يوجد تداخل دوائي مسجل؟',
+      'هل يوجد تداخل بين Simvastatin و Clarithromycin؟',
     ],
   },
   {
@@ -124,10 +125,12 @@ export default function Agent() {
         onLiveSweep={loadRuns}
       />
 
+      <SafetyResearchPanel token={token} canRun={canRun} />
+
       <section className="card">
         <div className="card-head">
           <h1 className="section-title">الوكلاء الذكيون الثلاثة</h1>
-          <span className="badge">بيانات فعلية</span>
+          <span className="badge">بيانات ومصادر فعلية</span>
         </div>
 
         {error && <div className="alert alert-error">{error}</div>}

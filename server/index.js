@@ -5,7 +5,8 @@ import { fileURLToPath } from 'node:url';
 import { env, configState, missingConfigKeys } from './env.js';
 import { getAdmin, isPublicConfigured } from './supabase.js';
 import { inventoryColumns } from './inventory.js';
-import { registerAgentRuntime, startAutonomousAgentScheduler } from './agentSweep.js';
+import { broadcastPharmacyEvent, registerAgentRuntime, startAutonomousAgentScheduler } from './agentSweep.js';
+import { startSafetyBackgroundWorker } from './safety/worker.js';
 import { ROLE_LABELS, SELF_REGISTER_ROLES } from './roles.js';
 import bootstrapRouter from './routes/bootstrap.js';
 import authRouter from './routes/auth.js';
@@ -141,6 +142,17 @@ app.listen(env.port, '0.0.0.0', () => {
     });
     if (sched.started) {
       console.log(`[pharmaguard] continuous autonomous agents active (every ${sched.watchIntervalSeconds}s + reactive hooks)`);
+    }
+    const safetyWorker = startSafetyBackgroundWorker({
+      getAdmin,
+      inventoryColumns,
+      intervalMinutes: env.safetyResearchIntervalMinutes,
+      onSafetyUpdated: (pharmacyId, snapshot) => {
+        broadcastPharmacyEvent(pharmacyId, 'safety:updated', snapshot);
+      },
+    });
+    if (safetyWorker.started) {
+      console.log(`[pharmaguard] safety_agent background researcher active (every ${safetyWorker.intervalMinutes}m + medicine triggers)`);
     }
   }
 });

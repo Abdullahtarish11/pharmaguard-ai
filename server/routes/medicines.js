@@ -13,6 +13,7 @@ import {
   aggregateStock,
 } from '../inventory.js';
 import { notifyInventoryChange } from '../agentSweep.js';
+import { notifySafetyMedicineChange } from '../safety/worker.js';
 
 const router = express.Router();
 
@@ -157,8 +158,10 @@ router.post(
     const { data, error } = await admin.from('medicines').insert(payload).select().limit(1);
     if (error) return httpError(res, 500, 'medicine_insert_failed', error.message);
 
+    const createdMedicine = shapeMedicine(data?.[0], cols);
     notifyInventoryChange(scope.pharmacyId, 'إضافة دواء جديد');
-    return res.status(201).json({ ok: true, medicine: shapeMedicine(data?.[0], cols) });
+    notifySafetyMedicineChange(scope.pharmacyId, `فحص سلامة دواء جديد: ${createdMedicine?.name ?? ''}`, createdMedicine?.id);
+    return res.status(201).json({ ok: true, medicine: createdMedicine });
   }),
 );
 
@@ -264,6 +267,7 @@ router.post(
     if (error) return httpError(res, 500, 'medicines_import_failed', error.message);
 
     notifyInventoryChange(scope.pharmacyId, `استيراد ${data?.length ?? toInsert.length} دواءً`);
+    notifySafetyMedicineChange(scope.pharmacyId, `فحص سلامة ${data?.length ?? toInsert.length} دواءً مستوردًا`);
     return res.status(201).json({
       ok: true,
       insertedCount: data?.length ?? toInsert.length,
@@ -322,8 +326,10 @@ router.patch(
     if (error) return httpError(res, 500, 'medicine_update_failed', error.message);
     if (!data?.length) return httpError(res, 404, 'medicine_not_found', 'الدواء غير موجود.');
 
+    const updatedMedicine = shapeMedicine(data[0], cols);
     notifyInventoryChange(scope.pharmacyId, 'تحديث بيانات دواء');
-    return res.json({ ok: true, medicine: shapeMedicine(data[0], cols) });
+    notifySafetyMedicineChange(scope.pharmacyId, `إعادة فحص دواء محدّث: ${updatedMedicine?.name ?? ''}`, updatedMedicine?.id);
+    return res.json({ ok: true, medicine: updatedMedicine });
   }),
 );
 

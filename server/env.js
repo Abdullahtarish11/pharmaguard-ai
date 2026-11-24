@@ -8,6 +8,20 @@ function firstNonEmpty(...values) {
   return '';
 }
 
+function optionalHttpUrl(value) {
+  const raw = clean(value).replace(/\/+$/, '');
+  if (!raw) return '';
+  try {
+    const parsed = new URL(raw);
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+      return raw;
+    }
+  } catch {
+    // رابط غير صالح أو فارغ -> يُعامل كغير مُعد دون تعطيل التشغيل
+  }
+  return '';
+}
+
 export const env = {
   port: Number(process.env.PORT || 3000),
   supabaseUrl: firstNonEmpty(
@@ -31,6 +45,15 @@ export const env = {
     const parsed = Number(process.env.AGENT_WATCH_INTERVAL_SECONDS || 30);
     return Number.isFinite(parsed) && parsed >= 10 && parsed <= 3600 ? Math.trunc(parsed) : 30;
   })(),
+  openserpUrl: optionalHttpUrl(process.env.OPENSERP_URL),
+  searxngUrl: optionalHttpUrl(process.env.SEARXNG_URL),
+  safetyResearchIntervalMinutes: (() => {
+    const parsed = Number(process.env.SAFETY_RESEARCH_INTERVAL_MINUTES || 60);
+    return Number.isFinite(parsed) && parsed >= 5 && parsed <= 1440 ? Math.trunc(parsed) : 60;
+  })(),
+  safetyPersistVerified: ['1', 'true', 'yes'].includes(
+    firstNonEmpty(process.env.SAFETY_PERSIST_VERIFIED).toLowerCase(),
+  ),
 };
 
 /** الحالة العامة للتكوين — لا تحتوي أي قيمة سرية. */
@@ -43,6 +66,11 @@ export function configState() {
     agentCronSecretPresent: Boolean(env.agentCronSecret),
     agentSweepIntervalHours: env.agentSweepIntervalHours,
     agentWatchIntervalSeconds: env.agentWatchIntervalSeconds,
+    openserpConfigured: Boolean(env.openserpUrl),
+    searxngConfigured: Boolean(env.searxngUrl),
+    webSearchStatus: env.openserpUrl || env.searxngUrl ? 'configured' : 'not_configured',
+    safetyResearchIntervalMinutes: env.safetyResearchIntervalMinutes,
+    safetyPersistVerified: env.safetyPersistVerified,
     ready: Boolean(env.supabaseUrl && env.anonKey && env.serviceRoleKey),
   };
 }

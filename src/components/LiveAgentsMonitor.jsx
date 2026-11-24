@@ -58,6 +58,34 @@ export default function LiveAgentsMonitor({
           if (Array.isArray(payload?.liveFeed)) setLiveFeed(payload.liveFeed);
           setScanningInfo(null);
           setActiveAgent(null);
+        } else if (eventName === 'safety:updated') {
+          if (payload?.pharmacy) {
+            setLatest((prev) => {
+              if (!prev?.audit?.agents?.safety_agent) return prev;
+              return {
+                ...prev,
+                audit: {
+                  ...prev.audit,
+                  agents: {
+                    ...prev.audit.agents,
+                    safety_agent: {
+                      ...prev.audit.agents.safety_agent,
+                      externalResearch: {
+                        workerStatus: payload.worker?.statusLabel ?? 'يعمل في الخلفية',
+                        workerRunning: Boolean(payload.worker?.running),
+                        lastCheckedAt: payload.pharmacy?.lastCheckedAt ?? null,
+                        lastError: payload.pharmacy?.lastError ?? null,
+                        documentedInteractionsCount: payload.pharmacy?.counts?.documented_interaction ?? 0,
+                        documentedWarningsCount: payload.pharmacy?.counts?.documented_warning ?? 0,
+                        counts: payload.pharmacy?.counts ?? null,
+                        searchEngineStatus: payload.telemetry?.searchEngine?.status ?? 'not_configured',
+                      },
+                    },
+                  },
+                },
+              };
+            });
+          }
         } else if (eventName === 'sweep:started') {
           setScanningInfo(payload);
           setActiveAgent('inventory_agent');
@@ -244,7 +272,7 @@ export default function LiveAgentsMonitor({
             <span className="agent-live-title">2. وكيل سلامة الأدوية</span>
             <span
               className={
-                safetyAgent?.criticalConflictsCount > 0
+                safetyAgent?.criticalConflictsCount > 0 || (safetyAgent?.externalResearch?.documentedInteractionsCount ?? 0) > 0
                   ? 'badge badge-danger'
                   : safetyAgent?.inventoryConflictsCount > 0
                     ? 'badge badge-warn'
@@ -255,14 +283,20 @@ export default function LiveAgentsMonitor({
                 ? 'يفحص الآن…'
                 : safetyAgent?.inventoryConflictsCount > 0
                   ? `${safetyAgent.inventoryConflictsCount} تعارض`
-                  : 'آمن'}
+                  : (safetyAgent?.externalResearch?.documentedInteractionsCount ?? 0) > 0
+                    ? `${safetyAgent.externalResearch.documentedInteractionsCount} موثق مرجعيًا`
+                    : 'مراقب متعدد المصادر'}
             </span>
           </div>
           {safetyAgent ? (
             <>
               <span className="small">قاعدة التداخلات: {safetyAgent.interactionsCatalogRows} سجلًا</span>
-              <span className="small">تعارضات بالمخزون: {safetyAgent.inventoryConflictsCount}</span>
-              <span className="hint">تعارضات حرجة/شديدة: {safetyAgent.criticalConflictsCount}</span>
+              <span className="small">
+                تداخلات موثقة بالمخزون: {safetyAgent.inventoryConflictsCount} (مصادر رسمية: {safetyAgent.externalResearch?.documentedInteractionsCount ?? 0})
+              </span>
+              <span className="hint">
+                المصادر: {safetyAgent.externalResearch?.workerStatus ?? 'مفعّل'} • تحذيرات: {safetyAgent.externalResearch?.documentedWarningsCount ?? 0} • البحث الشامل: {safetyAgent.externalResearch?.searchEngineStatus === 'configured' ? 'مُعد' : 'غير مُعد'}
+              </span>
             </>
           ) : (
             <span className="muted small">في انتظار فحص التداخلات…</span>

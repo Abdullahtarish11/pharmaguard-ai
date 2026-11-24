@@ -9,6 +9,8 @@ import {
   shapeMovement,
   sortBatchesFefo,
 } from './inventory.js';
+import { getSafetyStatusForPharmacy } from './safety/worker.js';
+import { SAFETY_CLASSIFICATION } from './safety/constants.js';
 
 export const SWEEP_INTERVAL_HOURS_DEFAULT = 6;
 export const WATCH_INTERVAL_SECONDS_DEFAULT = 30;
@@ -92,6 +94,10 @@ function broadcastEvent(pharmacyId, eventName, payload) {
       }
     }
   }
+}
+
+export function broadcastPharmacyEvent(pharmacyId, eventName, payload) {
+  broadcastEvent(pharmacyId, eventName, payload);
 }
 
 function pushFeedEvent(pharmacyId, entry) {
@@ -637,12 +643,31 @@ export async function auditSinglePharmacy({
     }
   }
 
+  const liveSafetyResearch = getSafetyStatusForPharmacy(pharmacyId);
+  const externalDocumentedCount = (liveSafetyResearch?.pharmacy?.pairFindings ?? []).filter(
+    (f) => f.classification?.code === SAFETY_CLASSIFICATION.DOCUMENTED_INTERACTION.code,
+  ).length;
+  const externalWarningsCount = (liveSafetyResearch?.pharmacy?.medicineWarnings ?? []).reduce(
+    (sum, item) => sum + (item.warnings?.length ?? 0),
+    0,
+  );
+
   const safetyAgentMetrics = {
     label: 'وكيل سلامة الأدوية',
     interactionsCatalogRows: interactionRows.length,
     inventoryConflictsCount: interactionConflicts.length,
     criticalConflictsCount: interactionConflicts.filter((c) => severityRank(c.severity) === 0).length,
     conflicts: interactionConflicts.slice(0, 25),
+    externalResearch: {
+      workerStatus: liveSafetyResearch?.worker?.statusLabel ?? 'متوقف',
+      workerRunning: Boolean(liveSafetyResearch?.worker?.running),
+      lastCheckedAt: liveSafetyResearch?.pharmacy?.lastCheckedAt ?? null,
+      lastError: liveSafetyResearch?.pharmacy?.lastError ?? null,
+      documentedInteractionsCount: externalDocumentedCount,
+      documentedWarningsCount: externalWarningsCount,
+      counts: liveSafetyResearch?.pharmacy?.counts ?? null,
+      searchEngineStatus: liveSafetyResearch?.telemetry?.searchEngine?.status ?? 'not_configured',
+    },
   };
 
   broadcastEvent(pharmacyId, 'agent:checked', {

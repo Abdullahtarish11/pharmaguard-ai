@@ -12,6 +12,12 @@ import {
   runAutonomousSweep,
   subscribeAgentEvents,
 } from '../agentSweep.js';
+import { analyzeDrugPair, analyzeSingleMedicine } from '../safety/analyzer.js';
+import {
+  executeSafetyResearchTask,
+  getSafetyStatusForPharmacy,
+} from '../safety/worker.js';
+import { inspectSafetyStorageCompatibility } from '../safety/storageCompat.js';
 import {
   inventoryColumns,
   shapeMedicine,
@@ -605,11 +611,33 @@ router.post(
     const medicine = mentionedMedicines[0] ?? null;
 
     let interactionData = { available: false, rows: [], pairMatches: [], reason: 'لم يُطلب استعلام تداخلات.' };
+    let externalSafetyResult = null;
     if (intent === 'interaction') {
       interactionData = await interactionsFor(admin, columns, question, mentionedMedicines, data.medicines);
+
+      // استخراج أسماء الأدوية من السؤال أو القائمة المذكورة للتحقق من المصادر الرسمية الحية
+      const cleanedWords = question
+        .replace(/[؟?!.,،;:+/()[\]{}"]/g, ' ')
+        .split(/\s+/)
+        .filter((w) => w.length >= 3 && !STOP_WORDS.has(w.toLowerCase()));
+
+      const candidateA = mentionedMedicines[0] ?? (cleanedWords[0] ? { name: cleanedWords[0] } : null);
+      const candidateB = mentionedMedicines[1] ?? (cleanedWords[1] ? { name: cleanedWords[1] } : null);
+      if (candidateA && candidateB) {
+        try {
+          externalSafetyResult = await analyzeDrugPair(candidateA, candidateB, {
+            localInteractions: interactionData.rows ?? [],
+            includeWebSearch: Boolean(env.openserpUrl || env.searxngUrl),
+            openserpUrl: env.openserpUrl,
+            searxngUrl: env.searxngUrl,
+          });
+        } catch {
+          externalSafetyResult = null;
+        }
+      }
     }
 
-    const { answer, facts } = buildAnswer(intent, {
+    const { answer: baseAnswer, facts } = buildAnswer(intent, {
       summary,
       alerts,
       medicines: data.medicines,
@@ -621,14 +649,36 @@ router.post(
       question,
     });
 
+    let answer = baseAnswer;
+    if (externalSafetyResult) {
+      const extLines = [
+        baseAnswer,
+        '',
+        '--- التحقق المرجعي متعدد المصادر (RxNorm / openFDA / DailyMed / PubMed) ---',
+        `• التصنيف المعتمد: ${externalSafetyResult.classification?.label ?? '—'}`,
+        `• الملخص: ${externalSafetyResult.arabicSummary}`,
+      ];
+      if (externalSafetyResult.documentedSeverity) {
+        extLines.push(`• الشدة الموثقة في المصدر: ${externalSafetyResult.documentedSeverity}`);
+      }
+      for (const ev of (externalSafetyResult.evidences ?? []).slice(0, 4)) {
+        const meta = [ev.sourceName, ev.publishedDate, ev.sourceUrl].filter(Boolean).join(' — ');
+        extLines.push(`• دليل [${meta}]: "${String(ev.originalText ?? '').slice(0, 220)}"`);
+      }
+      extLines.push(`• ${externalSafetyResult.disclaimer}`);
+      answer = extLines.join('\n');
+    }
+
     const response = {
       answer,
       intent,
       agent,
       facts,
+      externalSafetyResult,
       medicine: medicine ? { id: medicine.id, name: medicine.name } : null,
       disclaimer:
-        'هذه الإجابة مبنية حصريًا على البيانات المسجّلة في قاعدة بياناتك. الوكيل للتحليل والاستشارة فقط ولا ينفذ أي تعديل على المخزون؛ راجع مرجعًا صيدلانيًا معتمدًا للقرارات السريرية.',
+        externalSafetyResult?.disclaimer ||
+        'هذه الإجابة مبنية على البيانات المسجّلة والمصادر الطبية الرسمية الموثقة. الوكيل للتحليل والاستشارة فقط ولا ينفذ أي تعديل على المخزون؛ راجع مرجعًا صيدلانيًا معتمدًا للقرارات السريرية.',
       dataErrors: data.errors,
       generatedAt: new Date().toISOString(),
     };
@@ -731,6 +781,7 @@ router.get(
     };
 
     const initial = await getLatestSweepForPharmacy(admin, columns, scope.pharmacyId);
+    initial.safetyResearch = getSafetyStatusForPharmacy(scope.pharmacyId);
     send('init', initial);
 
     const unsubscribe = subscribeAgentEvents(scope.pharmacyId, send);
@@ -760,7 +811,96 @@ router.get(
     if (!scope.ok) return httpError(res, scope.status, scope.code, scope.message);
 
     const data = await getLatestSweepForPharmacy(admin, columns, scope.pharmacyId);
+    data.safetyResearch = getSafetyStatusForPharmacy(scope.pharmacyId);
     return res.json(data);
+  }),
+);
+
+/** حالة وكيل سلامة الأدوية متعدد المصادر ومحرك البحث والنتائج الحية للصيدلية. */
+router.get(
+  '/safety/status',
+  requireUser,
+  requireRole(ROLE.OWNER, ROLE.PHARMACIST, ROLE.INVENTORY),
+  asyncHandler(async (req, res) => {
+    const admin = getAdmin();
+    if (!admin) return httpError(res, 503, 'supabase_not_configured', 'لم تُضف مفاتيح Supabase بعد.');
+
+    const columns = await inventoryColumns();
+    const scope = requirePharmacy(columns, 'medicines', req.auth.profile);
+    if (!scope.ok) return httpError(res, scope.status, scope.code, scope.message);
+
+    return res.json(getSafetyStatusForPharmacy(scope.pharmacyId));
+  }),
+);
+
+/** فحص فوري عبر المصادر الطبية الرسمية (زوج دوائي أو دواء مفرد أو كامل مخزون الصيدلية). */
+router.post(
+  '/safety/check',
+  requireUser,
+  requireRole(ROLE.OWNER, ROLE.PHARMACIST, ROLE.INVENTORY),
+  asyncHandler(async (req, res) => {
+    const admin = getAdmin();
+    if (!admin) return httpError(res, 503, 'supabase_not_configured', 'لم تُضف مفاتيح Supabase بعد.');
+
+    const columns = await inventoryColumns();
+    const scope = requirePharmacy(columns, 'medicines', req.auth.profile);
+    if (!scope.ok) return httpError(res, scope.status, scope.code, scope.message);
+
+    const body = req.body ?? {};
+    const drugA = typeof body.drugA === 'string' ? body.drugA.trim() : '';
+    const drugB = typeof body.drugB === 'string' ? body.drugB.trim() : '';
+
+    if (drugA && drugB) {
+      const localInteractions = await interactionsFor(admin, columns, `${drugA} ${drugB}`, [], []);
+      const result = await analyzeDrugPair(
+        { name: drugA },
+        { name: drugB },
+        {
+          localInteractions: localInteractions.rows ?? [],
+          includeWebSearch: Boolean(env.openserpUrl || env.searxngUrl),
+          openserpUrl: env.openserpUrl,
+          searxngUrl: env.searxngUrl,
+        },
+      );
+      return res.json({ ok: true, mode: 'pair', result });
+    }
+
+    if (drugA && !drugB) {
+      const result = await analyzeSingleMedicine({ name: drugA });
+      return res.json({ ok: true, mode: 'single', result });
+    }
+
+    const cycleResult = await executeSafetyResearchTask(
+      {
+        pharmacyId: scope.pharmacyId,
+        trigger: 'manual',
+        reason: 'فحص فوري لمصادر سلامة الأدوية بطلب المستخدم',
+        targetMedicineId: body.medicineId ?? null,
+        force: true,
+      },
+      { getAdmin, inventoryColumns },
+    );
+
+    return res.json({
+      ok: true,
+      mode: 'inventory',
+      cycleResult,
+      safety: getSafetyStatusForPharmacy(scope.pharmacyId),
+    });
+  }),
+);
+
+/** فحص توافق التخزين في agent_runs و reports و inventory_alerts (الشرط #7 — للمالك فقط). */
+router.get(
+  '/safety/storage-compat',
+  requireUser,
+  requireRole(ROLE.OWNER),
+  asyncHandler(async (req, res) => {
+    const admin = getAdmin();
+    if (!admin) return httpError(res, 503, 'supabase_not_configured', 'لم تُضف مفاتيح Supabase بعد.');
+
+    const columns = await inventoryColumns(true);
+    return res.json(inspectSafetyStorageCompatibility(columns));
   }),
 );
 
