@@ -308,7 +308,7 @@ export default function SafetyResearchPanel({ token, canRun = false }) {
         </div>
       )}
 
-      <form className="grid grid-3" onSubmit={handlePairCheck} style={{ alignItems: 'end' }}>
+      <form className="safety-search-form" onSubmit={handlePairCheck}>
         <div className="field">
           <label htmlFor="safety-drug-a">الدواء الأول (عربي أو إنجليزي)</label>
           <input
@@ -331,7 +331,7 @@ export default function SafetyResearchPanel({ token, canRun = false }) {
             disabled={!canRun || busy}
           />
         </div>
-        <div className="field">
+        <div className="field safety-search-submit">
           <button className="btn btn-primary" type="submit" disabled={!canRun || busy || !drugA.trim()}>
             {busy ? 'جارٍ التخطيط والبحث…' : 'بدء البحث المستقل'}
           </button>
@@ -481,7 +481,7 @@ export default function SafetyResearchPanel({ token, canRun = false }) {
           <h3 className="section-title" style={{ fontSize: '0.95rem' }}>
             نتائج الفحص التلقائي لمخزون الصيدلية عبر المصادر الرسمية ({pairFindings.length})
           </h3>
-          <div className="table-wrap">
+          <div className="table-wrap table-mobile-cards">
             <table>
               <thead>
                 <tr>
@@ -496,19 +496,19 @@ export default function SafetyResearchPanel({ token, canRun = false }) {
               <tbody>
                 {pairFindings.slice(0, 15).map((item) => (
                   <tr key={item.pairKey}>
-                    <td>{item.medicineA?.name}</td>
-                    <td>{item.medicineB?.name}</td>
-                    <td>
+                    <td data-label="الدواء الأول">{item.medicineA?.name}</td>
+                    <td data-label="الدواء الثاني">{item.medicineB?.name}</td>
+                    <td data-label="التصنيف الموثق">
                       <span className={classificationBadgeClass(item.classification?.code)}>
                         {item.classification?.label}
                       </span>
                     </td>
-                    <td className="small">
+                    <td data-label="الجولات" className="small">
                       {item.researchTrace?.roundsExecuted ?? 1}
                       {item.researchTrace?.reSearchTriggered ? ' (استدراك)' : ''}
                     </td>
-                    <td>{item.documentedSeverity || '—'}</td>
-                    <td className="small">
+                    <td data-label="الشدة">{item.documentedSeverity || '—'}</td>
+                    <td data-label="المصادر والملخص" className="small col-wrap">
                       {item.arabicSummary}
                       {safeExternalUrl(item.evidences?.[0]?.sourceUrl) && (
                         <>

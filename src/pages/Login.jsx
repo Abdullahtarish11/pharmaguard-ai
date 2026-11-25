@@ -179,7 +179,7 @@ export default function Login() {
                 disabled={!ready}
               />
             </div>
-            <div className="btn-row">
+            <div className="btn-row btn-row-mobile-stack">
               <button className="btn btn-primary" type="submit" disabled={!ready || busy}>
                 {busy ? 'جارٍ الدخول…' : 'دخول'}
               </button>
@@ -202,7 +202,7 @@ export default function Login() {
 
       <div className="card">
         <h2 className="section-title">لا تملك حسابًا؟</h2>
-        <div className="btn-row">
+        <div className="btn-row btn-row-mobile-stack">
           <Link className="btn btn-soft" to="/register">
             تسجيل موظف
           </Link>

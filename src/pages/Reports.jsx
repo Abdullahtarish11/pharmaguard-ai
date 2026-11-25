@@ -140,7 +140,7 @@ export default function Reports() {
             <span className="badge badge-muted">{lowStock.length}</span>
           </div>
           {lowStock.length ? (
-            <div className="table-wrap">
+            <div className="table-wrap table-mobile-cards">
               <table>
                 <thead>
                   <tr>
@@ -152,9 +152,9 @@ export default function Reports() {
                 <tbody>
                   {lowStock.map((row) => (
                     <tr key={row.medicineId}>
-                      <td>{row.name}</td>
-                      <td>{row.units}</td>
-                      <td>{row.reorderLevel}</td>
+                      <td data-label="الدواء">{row.name}</td>
+                      <td data-label="المتاح">{row.units}</td>
+                      <td data-label="الحد">{row.reorderLevel}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -171,7 +171,7 @@ export default function Reports() {
             <span className="badge badge-muted">{expiring.length}</span>
           </div>
           {expiring.length ? (
-            <div className="table-wrap">
+            <div className="table-wrap table-mobile-cards">
               <table>
                 <thead>
                   <tr>
@@ -185,11 +185,11 @@ export default function Reports() {
                 <tbody>
                   {expiring.map((row) => (
                     <tr key={row.batchId}>
-                      <td>{row.medicineName ?? '—'}</td>
-                      <td>{row.batchNumber ?? row.batchId}</td>
-                      <td>{row.quantity}</td>
-                      <td dir="ltr">{row.expiryDate}</td>
-                      <td>{row.daysToExpiry}</td>
+                      <td data-label="الدواء">{row.medicineName ?? '—'}</td>
+                      <td data-label="الدفعة">{row.batchNumber ?? row.batchId}</td>
+                      <td data-label="الكمية">{row.quantity}</td>
+                      <td data-label="الصلاحية" dir="ltr">{row.expiryDate}</td>
+                      <td data-label="الأيام">{row.daysToExpiry}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -225,7 +225,7 @@ export default function Reports() {
         </div>
         {saved?.error && <div className="alert alert-warn">{saved.error}</div>}
         {saved?.reports?.length ? (
-          <div className="table-wrap">
+          <div className="table-wrap table-mobile-cards">
             <table>
               <thead>
                 <tr>
@@ -238,10 +238,10 @@ export default function Reports() {
               <tbody>
                 {saved.reports.map((report) => (
                   <tr key={report.id}>
-                    <td>{report.title ?? '—'}</td>
-                    <td>{report.type === 'inventory_snapshot' ? 'لقطة مخزون' : report.type ?? '—'}</td>
-                    <td>{formatDate(report.createdAt)}</td>
-                    <td>
+                    <td data-label="العنوان" className="col-wrap">{report.title ?? '—'}</td>
+                    <td data-label="النوع">{report.type === 'inventory_snapshot' ? 'لقطة مخزون' : report.type ?? '—'}</td>
+                    <td data-label="التاريخ">{formatDate(report.createdAt)}</td>
+                    <td data-label="تفاصيل" className="td-actions">
                       <button
                         className="btn btn-soft btn-sm"
                         type="button"

@@ -161,7 +161,7 @@ export default function Alerts() {
         )}
 
         {visible.length > 0 && (
-          <div className="table-wrap">
+          <div className="table-wrap table-mobile-cards">
             <table>
               <thead>
                 <tr>
@@ -175,9 +175,9 @@ export default function Alerts() {
               <tbody>
                 {visible.map((alert) => (
                   <tr key={alert.key}>
-                    <td>{TYPE_LABELS[alert.type] ?? alert.type}</td>
-                    <td>{alert.message}</td>
-                    <td>
+                    <td data-label="النوع">{TYPE_LABELS[alert.type] ?? alert.type}</td>
+                    <td data-label="الرسالة" className="col-wrap">{alert.message}</td>
+                    <td data-label="الخطورة">
                       <span
                         className={
                           alert.severity === 'high'
@@ -190,8 +190,8 @@ export default function Alerts() {
                         {SEVERITY_LABELS[alert.severity] ?? alert.severity}
                       </span>
                     </td>
-                    <td>{alert.units ?? '—'}</td>
-                    <td>
+                    <td data-label="الوحدات">{alert.units ?? '—'}</td>
+                    <td data-label="الحالة / إجراء" className="td-actions">
                       {alert.resolved ? (
                         <span className="badge">تمت المعالجة ✓</span>
                       ) : canResolve ? (
@@ -222,7 +222,7 @@ export default function Alerts() {
         </div>
         {data?.stored?.error && <div className="alert alert-warn">{data.stored.error}</div>}
         {data?.stored?.items?.length ? (
-          <div className="table-wrap">
+          <div className="table-wrap table-mobile-cards">
             <table>
               <thead>
                 <tr>
@@ -236,16 +236,16 @@ export default function Alerts() {
               <tbody>
                 {data.stored.items.map((item) => (
                   <tr key={item.id}>
-                    <td>{TYPE_LABELS[item.type] ?? item.type ?? '—'}</td>
-                    <td>{item.message ?? '—'}</td>
-                    <td>
+                    <td data-label="النوع">{TYPE_LABELS[item.type] ?? item.type ?? '—'}</td>
+                    <td data-label="الرسالة" className="col-wrap">{item.message ?? '—'}</td>
+                    <td data-label="الحالة">
                       <span className={item.resolved ? 'badge' : 'badge badge-warn'}>
                         {item.resolved ? 'محلول' : 'نشط'}
                       </span>
                     </td>
-                    <td>{formatDate(item.createdAt)}</td>
+                    <td data-label="التاريخ">{formatDate(item.createdAt)}</td>
                     {canResolve && (
-                      <td>
+                      <td data-label="إجراء" className="td-actions">
                         {!item.resolved ? (
                           <button
                             className="btn btn-ghost btn-sm"

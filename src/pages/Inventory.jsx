@@ -680,7 +680,7 @@ export default function Inventory() {
             </button>
           </div>
 
-          <div className="btn-row" style={{ marginTop: 0 }}>
+          <div className="btn-row btn-row-mobile-stack" style={{ marginTop: 0 }}>
             <button
               className="btn btn-primary"
               type="button"
@@ -775,14 +775,13 @@ export default function Inventory() {
           <h2 className="section-title">الأدوية</h2>
           <div className="btn-row" style={{ marginTop: 0 }}>
             <input
-              className="input"
-              style={{ width: '210px', padding: '0.4rem 0.7rem' }}
+              className="input search-input"
               type="search"
               placeholder="بحث بالاسم أو الباركود…"
               value={search}
               onChange={(event) => setSearch(event.target.value)}
             />
-            <label className="small muted" style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}>
+            <label className="small muted checkbox-label">
               <input
                 type="checkbox"
                 checked={includeInactive}
@@ -796,7 +795,7 @@ export default function Inventory() {
         {busy && !medicines.length && <p className="muted small">جارٍ التحميل…</p>}
         {!busy && !medicines.length && <p className="muted small">لا توجد أدوية مطابقة للبحث الحالي.</p>}
         {medicines.length > 0 && (
-          <div className="table-wrap">
+          <div className="table-wrap table-mobile-cards">
             <table>
               <thead>
                 <tr>
@@ -813,7 +812,7 @@ export default function Inventory() {
               <tbody>
                 {medicines.map((medicine) => (
                   <tr key={medicine.id}>
-                    <td>
+                    <td data-label="الاسم">
                       {medicine.name}
                       {medicine.isActive === false && (
                         <span className="badge badge-muted" style={{ marginInlineStart: '0.4rem' }}>
@@ -821,14 +820,14 @@ export default function Inventory() {
                         </span>
                       )}
                     </td>
-                    <td>{medicine.scientificName ?? '—'}</td>
-                    <td>{medicine.form ?? '—'}</td>
-                    <td>{medicine.availableUnits ?? 0}</td>
-                    <td>{medicine.reorderLevel ?? '—'}</td>
-                    <td dir="ltr">{medicine.nearestExpiry ?? '—'}</td>
-                    <td>{medicine.batchCount ?? 0}</td>
+                    <td data-label="علمي">{medicine.scientificName ?? '—'}</td>
+                    <td data-label="الشكل">{medicine.form ?? '—'}</td>
+                    <td data-label="المتاح">{medicine.availableUnits ?? 0}</td>
+                    <td data-label="الحد">{medicine.reorderLevel ?? '—'}</td>
+                    <td data-label="أقرب صلاحية" dir="ltr">{medicine.nearestExpiry ?? '—'}</td>
+                    <td data-label="دفعات">{medicine.batchCount ?? 0}</td>
                     {canWrite && (
-                      <td>
+                      <td data-label="إجراءات" className="td-actions">
                         <div className="btn-row" style={{ marginTop: 0 }}>
                           <button
                             className="btn btn-soft btn-sm"
@@ -972,7 +971,7 @@ export default function Inventory() {
         </div>
         {!busy && !batches.length && <p className="muted small">لا توجد دفعات مسجّلة بعد.</p>}
         {batches.length > 0 && (
-          <div className="table-wrap">
+          <div className="table-wrap table-mobile-cards">
             <table>
               <thead>
                 <tr>
@@ -988,8 +987,8 @@ export default function Inventory() {
               <tbody>
                 {batches.map((batch) => (
                   <tr key={batch.id}>
-                    <td>{batch.medicineName ?? '—'}</td>
-                    <td>
+                    <td data-label="الدواء">{batch.medicineName ?? '—'}</td>
+                    <td data-label="الدفعة">
                       {batch.batchNumber ?? '—'}
                       {batch.isFefoNext && (
                         <span className="badge" style={{ marginInlineStart: '0.4rem' }}>
@@ -1002,9 +1001,9 @@ export default function Inventory() {
                         </span>
                       )}
                     </td>
-                    <td>{batch.quantity ?? 0}</td>
-                    <td dir="ltr">{batch.expiryDate ?? '—'}</td>
-                    <td>
+                    <td data-label="الكمية">{batch.quantity ?? 0}</td>
+                    <td data-label="الصلاحية" dir="ltr">{batch.expiryDate ?? '—'}</td>
+                    <td data-label="الحالة">
                       <span
                         className={
                           batch.expiryBucket === 'expired'
@@ -1017,9 +1016,9 @@ export default function Inventory() {
                         {BUCKET_LABELS[batch.expiryBucket] ?? batch.expiryBucket ?? '—'}
                       </span>
                     </td>
-                    <td>{batch.daysToExpiry ?? '—'}</td>
+                    <td data-label="الأيام">{batch.daysToExpiry ?? '—'}</td>
                     {canWrite && (
-                      <td>
+                      <td data-label="تعديل" className="td-actions">
                         <div className="btn-row" style={{ marginTop: 0 }}>
                           <button
                             className="btn btn-soft btn-sm"

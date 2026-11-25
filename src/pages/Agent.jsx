@@ -228,7 +228,7 @@ export default function Agent() {
               <h3 className="section-title" style={{ marginTop: '1rem', fontSize: '1rem' }}>
                 الحقائق المستخدمة ({result.facts.length})
               </h3>
-              <div className="table-wrap">
+              <div className="table-wrap table-mobile-cards">
                 <table>
                   <thead>
                     <tr>
@@ -239,8 +239,8 @@ export default function Agent() {
                   <tbody>
                     {result.facts.map((fact, index) => (
                       <tr key={`${fact.type}-${index}`}>
-                        <td>{FACT_TYPE_LABELS[fact.type] ?? fact.type}</td>
-                        <td dir="auto">
+                        <td data-label="النوع">{FACT_TYPE_LABELS[fact.type] ?? fact.type}</td>
+                        <td data-label="التفصيل" className="col-wrap" dir="auto">
                           {Object.entries(fact)
                             .filter(([key]) => key !== 'type')
                             .map(([key, value]) => `${FACT_KEY_LABELS[key] ?? key}: ${value ?? '—'}`)
@@ -271,7 +271,7 @@ export default function Agent() {
           <p className="muted small">جدول agent_runs غير متاح للتسجيل، لكن الإجابات تعمل بشكل طبيعي.</p>
         )}
         {runs?.runs?.length ? (
-          <div className="table-wrap">
+          <div className="table-wrap table-mobile-cards">
             <table>
               <thead>
                 <tr>
@@ -284,12 +284,12 @@ export default function Agent() {
               <tbody>
                 {runs.runs.map((run) => (
                   <tr key={run.id}>
-                    <td dir="auto">
+                    <td data-label="السؤال" className="col-wrap" dir="auto">
                       {typeof run.input === 'string' ? run.input : run.input?.question ?? '—'}
                     </td>
-                    <td>{run.status === 'completed' ? 'مكتمل' : run.status ?? '—'}</td>
-                    <td>{formatDate(run.createdAt)}</td>
-                    <td>
+                    <td data-label="الحالة">{run.status === 'completed' ? 'مكتمل' : run.status ?? '—'}</td>
+                    <td data-label="التاريخ">{formatDate(run.createdAt)}</td>
+                    <td data-label="الإجابة" className="td-actions">
                       {run.answer ? (
                         <button
                           className="btn btn-soft btn-sm"

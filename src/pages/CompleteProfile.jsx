@@ -25,7 +25,7 @@ export default function CompleteProfile() {
   }
 
   return (
-    <div className="card">
+    <div className="card form-card-narrow">
       <h1 className="section-title">أكمل ملفك الشخصي</h1>
       {error && <div className="alert alert-error">{error}</div>}
       <form className="form" onSubmit={handleSubmit}>

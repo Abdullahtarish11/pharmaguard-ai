@@ -283,8 +283,7 @@ export default function Movements() {
           <h2 className="section-title">آخر الحركات</h2>
           <div className="btn-row" style={{ marginTop: 0 }}>
             <select
-              className="select"
-              style={{ width: 'auto', padding: '0.35rem 0.6rem' }}
+              className="select select-inline"
               value={typeFilter}
               onChange={(event) => setTypeFilter(event.target.value)}
             >
@@ -301,7 +300,7 @@ export default function Movements() {
         {busy && !movements.length && <p className="muted small">جارٍ التحميل…</p>}
         {!busy && !movements.length && <p className="muted small">لا توجد حركات مسجّلة بعد.</p>}
         {movements.length > 0 && (
-          <div className="table-wrap">
+          <div className="table-wrap table-mobile-cards">
             <table>
               <thead>
                 <tr>
@@ -316,12 +315,12 @@ export default function Movements() {
               <tbody>
                 {movements.map((movement) => (
                   <tr key={movement.id}>
-                    <td>{typeLabels[movement.type] ?? movement.type ?? '—'}</td>
-                    <td>{movement.medicineName ?? '—'}</td>
-                    <td>{movement.batchNumber ?? movement.batchId ?? '—'}</td>
-                    <td>{movement.quantity ?? '—'}</td>
-                    <td>{movement.note ?? '—'}</td>
-                    <td>{formatDate(movement.createdAt)}</td>
+                    <td data-label="النوع">{typeLabels[movement.type] ?? movement.type ?? '—'}</td>
+                    <td data-label="الدواء">{movement.medicineName ?? '—'}</td>
+                    <td data-label="الدفعة">{movement.batchNumber ?? movement.batchId ?? '—'}</td>
+                    <td data-label="الكمية">{movement.quantity ?? '—'}</td>
+                    <td data-label="ملاحظة" className="col-wrap">{movement.note ?? '—'}</td>
+                    <td data-label="التاريخ">{formatDate(movement.createdAt)}</td>
                   </tr>
                 ))}
               </tbody>

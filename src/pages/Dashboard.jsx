@@ -294,7 +294,7 @@ export default function Dashboard() {
           {error && <div className="alert alert-error">{error}</div>}
           {notice && <div className="alert alert-success">{notice}</div>}
           {staff?.staff?.length ? (
-            <div className="table-wrap">
+            <div className="table-wrap table-mobile-cards">
               <table>
                 <thead>
                   <tr>
@@ -308,15 +308,14 @@ export default function Dashboard() {
                 <tbody>
                   {staff.staff.map((member) => (
                     <tr key={member.id}>
-                      <td>{member.fullName || '—'}</td>
-                      <td dir="ltr">{member.email || '—'}</td>
-                      <td>
+                      <td data-label="الاسم">{member.fullName || '—'}</td>
+                      <td data-label="البريد" dir="ltr">{member.email || '—'}</td>
+                      <td data-label="الدور">
                         {member.isSelf || member.role === 'owner' ? (
                           member.roleLabel
                         ) : (
                           <select
-                            className="select"
-                            style={{ minWidth: '140px', padding: '0.35rem 0.5rem' }}
+                            className="select select-compact"
                             value={member.role ?? 'pharmacist'}
                             disabled={updatingId === member.id}
                             onChange={(event) =>
@@ -335,12 +334,12 @@ export default function Dashboard() {
                           </select>
                         )}
                       </td>
-                      <td>
+                      <td data-label="الحالة">
                         <span className={member.linked ? 'badge' : 'badge badge-warn'}>
                           {member.linked ? 'مرتبط بالصيدلية' : 'بانتظار الربط'}
                         </span>
                       </td>
-                      <td>
+                      <td data-label="إجراءات" className="td-actions">
                         {member.isSelf || member.role === 'owner' ? (
                           <span className="muted small">—</span>
                         ) : !member.linked ? (

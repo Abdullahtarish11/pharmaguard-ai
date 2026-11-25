@@ -336,7 +336,7 @@ export default function LiveAgentsMonitor({
               </Link>
             </div>
           ) : (
-            <div className="table-wrap">
+            <div className="table-wrap table-mobile-cards">
               <table>
                 <thead>
                   <tr>
@@ -349,9 +349,9 @@ export default function LiveAgentsMonitor({
                 <tbody>
                   {safetyAgent.conflicts.slice(0, 12).map((c, idx) => (
                     <tr key={`${c.medicineA?.id}-${c.medicineB?.id}-${idx}`}>
-                      <td>{c.medicineA?.name ?? '—'}</td>
-                      <td>{c.medicineB?.name ?? '—'}</td>
-                      <td>
+                      <td data-label="الدواء الأول">{c.medicineA?.name ?? '—'}</td>
+                      <td data-label="الدواء الثاني">{c.medicineB?.name ?? '—'}</td>
+                      <td data-label="الشدة">
                         <span
                           className={
                             ['critical', 'high', 'major', 'severe'].includes(String(c.severity ?? '').toLowerCase())
@@ -362,7 +362,7 @@ export default function LiveAgentsMonitor({
                           {c.severity ?? '—'}
                         </span>
                       </td>
-                      <td className="small">{c.description ?? `${c.drugA} + ${c.drugB}`}</td>
+                      <td data-label="تفاصيل التداخل" className="small col-wrap">{c.description ?? `${c.drugA} + ${c.drugB}`}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -411,7 +411,7 @@ export default function LiveAgentsMonitor({
           <h3 className="section-title" style={{ fontSize: '0.95rem' }}>
             أولوية الصرف المراقبة وفق FEFO ({audit.fefoTop.length})
           </h3>
-          <div className="table-wrap">
+          <div className="table-wrap table-mobile-cards">
             <table>
               <thead>
                 <tr>
@@ -425,11 +425,11 @@ export default function LiveAgentsMonitor({
               <tbody>
                 {audit.fefoTop.slice(0, 8).map((row) => (
                   <tr key={row.medicineId}>
-                    <td>{row.medicineName}</td>
-                    <td dir="ltr">{row.firstBatch ?? '—'}</td>
-                    <td dir="ltr">{row.firstExpiry ? formatDate(row.firstExpiry) : '—'}</td>
-                    <td>{row.firstQuantity}</td>
-                    <td>{row.validBatches}</td>
+                    <td data-label="الدواء">{row.medicineName}</td>
+                    <td data-label="أول دفعة" dir="ltr">{row.firstBatch ?? '—'}</td>
+                    <td data-label="تاريخ الانتهاء" dir="ltr">{row.firstExpiry ? formatDate(row.firstExpiry) : '—'}</td>
+                    <td data-label="الكمية">{row.firstQuantity}</td>
+                    <td data-label="الدفعات الصالحة">{row.validBatches}</td>
                   </tr>
                 ))}
               </tbody>

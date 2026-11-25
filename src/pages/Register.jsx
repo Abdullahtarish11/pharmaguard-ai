@@ -135,7 +135,7 @@ export default function Register() {
 
       <div className="card">
         <h2 className="section-title">هل أنت مالك الصيدلية؟</h2>
-        <div className="btn-row">
+        <div className="btn-row btn-row-mobile-stack">
           <Link className="btn btn-ghost" to="/setup">
             فتح صفحة التهيئة
           </Link>

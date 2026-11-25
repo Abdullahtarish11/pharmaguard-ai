@@ -112,7 +112,7 @@ export default function Diagnostics() {
       {report?.tables?.length > 0 && (
         <div className="card">
           <h2 className="section-title">الجداول والقراءة</h2>
-          <div className="table-wrap">
+          <div className="table-wrap table-mobile-cards">
             <table>
               <thead>
                 <tr>
@@ -128,11 +128,11 @@ export default function Diagnostics() {
                   const colNames = report.schema?.tables?.[table.name]?.columnNames ?? [];
                   return (
                     <tr key={table.name}>
-                      <td dir="ltr">{table.name}</td>
-                      <td>{table.exists === null ? '—' : table.exists ? 'نعم' : 'لا'}</td>
-                      <td>{table.columnCount}</td>
-                      <td>{table.rowCount ?? '—'}</td>
-                      <td className="small" dir="ltr">
+                      <td data-label="الجدول" dir="ltr">{table.name}</td>
+                      <td data-label="موجود">{table.exists === null ? '—' : table.exists ? 'نعم' : 'لا'}</td>
+                      <td data-label="أعمدة">{table.columnCount}</td>
+                      <td data-label="صفوف">{table.rowCount ?? '—'}</td>
+                      <td data-label="ملاحظة" className="small col-wrap" dir="ltr">
                         {table.error || (colNames.length ? colNames.join(', ') : '—')}
                       </td>
                     </tr>
@@ -161,7 +161,7 @@ export default function Diagnostics() {
                     {tbl.compatible ? 'جاهز دون تعديل' : 'تحقق من الإلزامية'}
                   </span>
                 </div>
-                <div className="table-wrap">
+                <div className="table-wrap table-mobile-cards">
                   <table>
                     <thead>
                       <tr>
@@ -174,10 +174,10 @@ export default function Diagnostics() {
                     <tbody>
                       {tbl.columns.map((col) => (
                         <tr key={col.name}>
-                          <td dir="ltr">{col.name}</td>
-                          <td dir="ltr">{col.type}</td>
-                          <td>{col.required ? 'NOT NULL' : 'اختياري'}</td>
-                          <td dir="ltr" className="small">
+                          <td data-label="العمود" dir="ltr">{col.name}</td>
+                          <td data-label="النوع" dir="ltr">{col.type}</td>
+                          <td data-label="إلزامي">{col.required ? 'NOT NULL' : 'اختياري'}</td>
+                          <td data-label="القيود" dir="ltr" className="small col-wrap">
                             {[
                               col.primaryKey ? 'PK' : null,
                               col.foreignKey ? 'FK' : null,
@@ -220,7 +220,7 @@ export default function Diagnostics() {
           </div>
           {report?.rls?.error && <div className="alert alert-warn">{report.rls.error}</div>}
           {report?.rls?.installed && (
-            <div className="table-wrap">
+            <div className="table-wrap table-mobile-cards">
               <table>
                 <thead>
                   <tr>
@@ -232,9 +232,9 @@ export default function Diagnostics() {
                 <tbody>
                   {(report.rls.tables ?? []).map((row) => (
                     <tr key={row.table_name}>
-                      <td dir="ltr">{row.table_name}</td>
-                      <td>{row.rls_enabled ? 'مفعّل' : 'معطّل'}</td>
-                      <td>{row.policy_count}</td>
+                      <td data-label="الجدول" dir="ltr">{row.table_name}</td>
+                      <td data-label="RLS">{row.rls_enabled ? 'مفعّل' : 'معطّل'}</td>
+                      <td data-label="سياسات">{row.policy_count}</td>
                     </tr>
                   ))}
                 </tbody>

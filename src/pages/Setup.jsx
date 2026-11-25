@@ -67,7 +67,7 @@ export default function Setup() {
 
   return (
     <div className="grid">
-      <div className="card">
+      <div className="card form-card-narrow">
         <h1 className="section-title">تهيئة أول مالك للصيدلية</h1>
 
         {status && (

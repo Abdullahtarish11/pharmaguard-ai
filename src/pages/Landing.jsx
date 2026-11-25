@@ -59,7 +59,7 @@ export default function Landing() {
       <section className="hero">
         <div>
           <h1>إدارة صيدلية ذكية وآمنة على بياناتك الحقيقية</h1>
-          <div className="btn-row">
+          <div className="btn-row btn-row-mobile-stack">
             {session ? (
               <Link className="btn btn-primary" to="/app">
                 الانتقال إلى لوحة التحكم
