@@ -13,6 +13,7 @@ import {
   subscribeAgentEvents,
 } from '../agentSweep.js';
 import { analyzeDrugPair, analyzeSingleMedicine } from '../safety/analyzer.js';
+import { getProbedSourcesTelemetry } from '../safety/sources/index.js';
 import {
   executeSafetyResearchTask,
   getSafetyStatusForPharmacy,
@@ -197,7 +198,14 @@ function extractDrugSearchGroups(text, matchedMedicines = [], allMedicines = [])
   return { groups: groups.slice(0, 10), scanInventory };
 }
 
-export async function interactionsFor(admin, columns, text, medicineOrList, allMedicines = []) {
+export async function interactionsFor(
+  admin,
+  columns,
+  text,
+  medicineOrList,
+  allMedicines = [],
+  { pharmacyId = null } = {},
+) {
   const cols = columns.interactions ?? {};
   if (!cols.id || (!cols.drugA && !cols.drugB)) {
     return { available: false, rows: [], pairMatches: [], reason: 'جدول التداخلات غير متاح أو لا يحتوي أعمدة أسماء الدواء.' };
@@ -223,6 +231,14 @@ export async function interactionsFor(admin, columns, text, medicineOrList, allM
   );
 
   let query = admin.from('drug_interactions').select('*').limit(200);
+  if (cols.pharmacy) {
+    const safePid = pharmacyId ? String(pharmacyId).replace(/[^a-zA-Z0-9_-]/g, '') : '';
+    if (safePid) {
+      query = query.or(`${cols.pharmacy}.eq.${safePid},${cols.pharmacy}.is.null`);
+    } else {
+      query = query.is(cols.pharmacy, null);
+    }
+  }
   if (isUuidA || isUuidB) {
     const ids = matchedMedicines.map((m) => m?.id).filter(Boolean).slice(0, 12);
     if (ids.length > 0) {
@@ -253,7 +269,14 @@ export async function interactionsFor(admin, columns, text, medicineOrList, allM
     return isUuid && medLabelById.has(str) ? medLabelById.get(str) : raw;
   };
 
-  const rows = (result.data ?? []).map((row) => ({
+  const rawRows = (result.data ?? []).filter((row) => {
+    if (!cols.pharmacy) return true;
+    const rowPid = row[cols.pharmacy] != null ? String(row[cols.pharmacy]) : null;
+    if (pharmacyId) return rowPid === null || rowPid === String(pharmacyId);
+    return rowPid === null;
+  });
+
+  const rows = rawRows.map((row) => ({
     drugA: cols.drugA ? mapDrugVal(row[cols.drugA], isUuidA) : null,
     drugB: cols.drugB ? mapDrugVal(row[cols.drugB], isUuidB) : null,
     severity: cols.severity ? row[cols.severity] ?? null : null,
@@ -613,7 +636,9 @@ router.post(
     let interactionData = { available: false, rows: [], pairMatches: [], reason: 'لم يُطلب استعلام تداخلات.' };
     let externalSafetyResult = null;
     if (intent === 'interaction') {
-      interactionData = await interactionsFor(admin, columns, question, mentionedMedicines, data.medicines);
+      interactionData = await interactionsFor(admin, columns, question, mentionedMedicines, data.medicines, {
+        pharmacyId: scope.pharmacyId,
+      });
 
       // استخراج أسماء الأدوية من السؤال أو القائمة المذكورة للتحقق من المصادر الرسمية الحية
       const cleanedWords = question
@@ -658,6 +683,12 @@ router.post(
         `• التصنيف المعتمد: ${externalSafetyResult.classification?.label ?? '—'}`,
         `• الملخص: ${externalSafetyResult.arabicSummary}`,
       ];
+      if (externalSafetyResult.researchTrace) {
+        const trace = externalSafetyResult.researchTrace;
+        extLines.push(
+          `• خطة الاستقصاء: ${trace.roundsExecuted} جولة بحث (${trace.reSearchTriggered ? `أُعيد البحث بسبب: ${trace.reSearchReasons.join('؛ ')}` : 'اكتمل من الجولة الأولى'})`,
+        );
+      }
       if (externalSafetyResult.documentedSeverity) {
         extLines.push(`• الشدة الموثقة في المصدر: ${externalSafetyResult.documentedSeverity}`);
       }
@@ -829,7 +860,14 @@ router.get(
     const scope = requirePharmacy(columns, 'medicines', req.auth.profile);
     if (!scope.ok) return httpError(res, scope.status, scope.code, scope.message);
 
-    return res.json(getSafetyStatusForPharmacy(scope.pharmacyId));
+    const status = getSafetyStatusForPharmacy(scope.pharmacyId);
+    if (req.query?.probe === '1' || req.query?.probe === 'true') {
+      status.telemetry = await getProbedSourcesTelemetry({
+        openserpUrl: env.openserpUrl,
+        searxngUrl: env.searxngUrl,
+      });
+    }
+    return res.json(status);
   }),
 );
 
@@ -849,9 +887,14 @@ router.post(
     const body = req.body ?? {};
     const drugA = typeof body.drugA === 'string' ? body.drugA.trim() : '';
     const drugB = typeof body.drugB === 'string' ? body.drugB.trim() : '';
+    if (drugA.length > 200 || drugB.length > 200) {
+      return httpError(res, 400, 'invalid_drug_name', 'اسم الدواء أطول من الحد المسموح.');
+    }
 
     if (drugA && drugB) {
-      const localInteractions = await interactionsFor(admin, columns, `${drugA} ${drugB}`, [], []);
+      const localInteractions = await interactionsFor(admin, columns, `${drugA} ${drugB}`, [], [], {
+        pharmacyId: scope.pharmacyId,
+      });
       const result = await analyzeDrugPair(
         { name: drugA },
         { name: drugB },
@@ -866,8 +909,32 @@ router.post(
     }
 
     if (drugA && !drugB) {
-      const result = await analyzeSingleMedicine({ name: drugA });
+      const result = await analyzeSingleMedicine(
+        { name: drugA },
+        {
+          openserpUrl: env.openserpUrl,
+          searxngUrl: env.searxngUrl,
+        },
+      );
       return res.json({ ok: true, mode: 'single', result });
+    }
+
+    let targetMedicineId = null;
+    if (body.medicineId !== undefined && body.medicineId !== null && body.medicineId !== '') {
+      if (typeof body.medicineId !== 'string' && typeof body.medicineId !== 'number') {
+        return httpError(res, 400, 'invalid_medicine_id', 'معرّف الدواء غير صالح.');
+      }
+      targetMedicineId = String(body.medicineId).trim();
+      const medCols = columns.medicines ?? {};
+      if (medCols.id) {
+        let ownQuery = admin.from('medicines').select(medCols.id).eq(medCols.id, targetMedicineId).limit(1);
+        ownQuery = scopeToPharmacy(ownQuery, columns, 'medicines', req.auth.profile);
+        const ownRes = await ownQuery;
+        if (ownRes.error) return httpError(res, 500, 'medicine_lookup_failed', ownRes.error.message);
+        if (!ownRes.data?.length) {
+          return httpError(res, 404, 'medicine_not_found', 'الدواء المحدد غير موجود ضمن مخزون صيدليتك.');
+        }
+      }
     }
 
     const cycleResult = await executeSafetyResearchTask(
@@ -875,7 +942,7 @@ router.post(
         pharmacyId: scope.pharmacyId,
         trigger: 'manual',
         reason: 'فحص فوري لمصادر سلامة الأدوية بطلب المستخدم',
-        targetMedicineId: body.medicineId ?? null,
+        targetMedicineId,
         force: true,
       },
       { getAdmin, inventoryColumns },

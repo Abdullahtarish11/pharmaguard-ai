@@ -200,6 +200,29 @@ export default function Agent() {
             </div>
           </div>
           <pre className="agent-answer">{result.answer}</pre>
+          {result.externalSafetyResult?.researchTrace && (
+            <details style={{ marginTop: '0.8rem' }}>
+              <summary className="small" style={{ cursor: 'pointer', fontWeight: 600 }}>
+                خطوات التفكير والبحث التشغيلية لوكيل السلامة ({result.externalSafetyResult.researchTrace.roundsExecuted} جولة)
+              </summary>
+              <div className="grid" style={{ gap: '0.45rem', marginTop: '0.5rem' }}>
+                {(result.externalSafetyResult.researchTrace.rounds ?? []).map((round) => (
+                  <div key={round.round} className="live-feed-item">
+                    <div className="live-feed-meta">
+                      <span className="badge">الجولة {round.round}</span>
+                      <strong className="small">{round.phase}</strong>
+                    </div>
+                    <p className="muted small" style={{ margin: '0.2rem 0' }}>{round.reason}</p>
+                    {(round.steps ?? []).map((st, idx) => (
+                      <div key={idx} className="small">
+                        <strong>{st.tool}:</strong> {st.detail}
+                      </div>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            </details>
+          )}
           {Array.isArray(result.facts) && result.facts.length > 0 && (
             <>
               <h3 className="section-title" style={{ marginTop: '1rem', fontSize: '1rem' }}>

@@ -13,13 +13,14 @@ import { env } from '../env.js';
 import { payloadFor, shapeMedicine } from '../inventory.js';
 import { SAFETY_CLASSIFICATION } from './constants.js';
 import { analyzeDrugPair, analyzeSingleMedicine } from './analyzer.js';
-import { getSourcesTelemetry, resolveMedicineIdentity, fetchDrugMonographs } from './sources/index.js';
+import { getSourcesTelemetry } from './sources/index.js';
 import { inspectSafetyStorageCompatibility } from './storageCompat.js';
 
 const MAX_FINDINGS = 60;
 const MAX_RETRIES = 3;
 const RETRY_BASE_MS = 15_000;
 const WORKER_TICK_MS = 5_000;
+const MAX_MEDS_PER_CYCLE = 20;
 const MAX_PAIRS_PER_CYCLE = 12;
 
 const GLOBAL_KEY = '__global__';
@@ -52,6 +53,7 @@ const queuedKeys = new Set();
 const retryQueue = new Map();
 const resultsByPharmacy = new Map();
 const processedHashesByPharmacy = new Map();
+const cursorByPharmacy = new Map();
 
 let runtime = null;
 let tickTimer = null;
@@ -70,6 +72,7 @@ function getPharmacyStore(pharmacyId) {
       lastError: null,
       medicinesAnalyzed: 0,
       pairsChecked: 0,
+      coverage: null,
       pairFindings: [],
       medicineWarnings: [],
       errorsLog: [],
@@ -175,12 +178,14 @@ function scheduleRetryTask(task, errorMsg) {
 }
 
 async function fetchPharmacyMedicines(admin, columns, pharmacyId) {
-  let q = admin.from('medicines').select('*').limit(500);
   const pharmCol = columns?.medicines?.pharmacy;
+  if (pharmCol && !pharmacyId) return [];
+  let q = admin.from('medicines').select('*').limit(500);
   if (pharmCol && pharmacyId) q = q.eq(pharmCol, pharmacyId);
   const { data, error } = await q;
   if (error) throw new Error(`فشل قراءة medicines: ${error.message}`);
   return (data ?? [])
+    .filter((r) => !pharmCol || !pharmacyId || String(r[pharmCol] ?? '') === String(pharmacyId))
     .map((r) => shapeMedicine(r, columns.medicines))
     .filter((m) => m && m.isActive !== false);
 }
@@ -189,18 +194,30 @@ async function fetchLocalInteractions(admin, columns, pharmacyId) {
   const cols = columns?.interactions ?? {};
   if (!cols.id || !cols.drugA || !cols.drugB) return [];
   let q = admin.from('drug_interactions').select('*').limit(1000);
-  if (cols.pharmacy && pharmacyId) {
-    q = q.or(`${cols.pharmacy}.eq.${pharmacyId},${cols.pharmacy}.is.null`);
+  if (cols.pharmacy) {
+    const safePid = pharmacyId ? String(pharmacyId).replace(/[^a-zA-Z0-9_-]/g, '') : '';
+    if (safePid) {
+      q = q.or(`${cols.pharmacy}.eq.${safePid},${cols.pharmacy}.is.null`);
+    } else {
+      q = q.is(cols.pharmacy, null);
+    }
   }
   const { data, error } = await q;
   if (error || !Array.isArray(data)) return [];
-  return data.map((row) => ({
-    drugA: row[cols.drugA] ?? null,
-    drugB: row[cols.drugB] ?? null,
-    severity: cols.severity ? row[cols.severity] ?? null : null,
-    description: cols.description ? row[cols.description] ?? null : null,
-    source: cols.source ? row[cols.source] ?? null : null,
-  }));
+  return data
+    .filter((row) => {
+      if (!cols.pharmacy) return true;
+      const rowPid = row[cols.pharmacy] != null ? String(row[cols.pharmacy]) : null;
+      if (pharmacyId) return rowPid === null || rowPid === String(pharmacyId);
+      return rowPid === null;
+    })
+    .map((row) => ({
+      drugA: row[cols.drugA] ?? null,
+      drugB: row[cols.drugB] ?? null,
+      severity: cols.severity ? row[cols.severity] ?? null : null,
+      description: cols.description ? row[cols.description] ?? null : null,
+      source: cols.source ? row[cols.source] ?? null : null,
+    }));
 }
 
 async function maybePersistVerifiedSafetySummary(admin, columns, pharmacyId, store, trigger) {
@@ -247,8 +264,59 @@ async function maybePersistVerifiedSafetySummary(admin, columns, pharmacyId, sto
   return { persisted: false, skippedReason: 'no_writable_columns' };
 }
 
+function pickRotatingMedicineWindow(sortedMeds, startOffset, limit) {
+  const n = sortedMeds.length;
+  if (n === 0) return { items: [], nextOffset: 0 };
+  const start = ((startOffset % n) + n) % n;
+  const count = Math.min(limit, n);
+  const items = [];
+  for (let idx = 0; idx < count; idx += 1) {
+    items.push(sortedMeds[(start + idx) % n]);
+  }
+  return {
+    items,
+    nextOffset: (start + count) % n,
+  };
+}
+
+function pickRotatingPairWindow(sortedMeds, startPairOffset, limit) {
+  const n = sortedMeds.length;
+  const totalPairs = Math.floor((n * (n - 1)) / 2);
+  if (totalPairs === 0) return { pairs: [], totalPairs: 0, nextPairOffset: 0 };
+  const start = ((startPairOffset % totalPairs) + totalPairs) % totalPairs;
+  const count = Math.min(limit, totalPairs);
+  const pairs = [];
+
+  let offset = start;
+  let i = 0;
+  while (i < n - 1) {
+    const rowLen = n - 1 - i;
+    if (offset < rowLen) break;
+    offset -= rowLen;
+    i += 1;
+  }
+  let j = i + 1 + offset;
+
+  for (let k = 0; k < count; k += 1) {
+    pairs.push([sortedMeds[i], sortedMeds[j]]);
+    j += 1;
+    if (j >= n) {
+      i += 1;
+      if (i >= n - 1) i = 0;
+      j = i + 1;
+    }
+  }
+
+  return {
+    pairs,
+    totalPairs,
+    nextPairOffset: (start + count) % totalPairs,
+  };
+}
+
 /**
- * ينفذ فحص سلامة متعدد المصادر لمخزون صيدلية (أو مقارنة دواء مضاف بجميع الأدوية الأخرى).
+ * ينفذ فحص سلامة متعدد المصادر لمخزون صيدلية (أو مقارنة دواء مضاف بجميع الأدوية الأخرى)
+ * مع تدوير نوافذ الفحص عبر الدورات الدورية وإعادة استخدام الهوية والنشرات دون تكرار.
  */
 export async function executeSafetyResearchTask(task, deps = runtime) {
   const admin = deps?.getAdmin?.();
@@ -269,58 +337,109 @@ export async function executeSafetyResearchTask(task, deps = runtime) {
   }
 
   const fetchImpl = deps?.fetchImpl ?? fetch;
-  const activeMeds = medicines.slice(0, 20);
+  const sortedMeds = [...medicines].sort((a, b) =>
+    String(a.id ?? a.name).localeCompare(String(b.id ?? b.name)),
+  );
+  const cursor = cursorByPharmacy.get(pKey) ?? { medOffset: 0, pairOffset: 0 };
+
+  let selectedPairs = [];
+  let totalPossiblePairs = Math.floor((sortedMeds.length * (sortedMeds.length - 1)) / 2);
+  let nextMedOffset = cursor.medOffset;
+  let nextPairOffset = cursor.pairOffset;
+  const medsMap = new Map();
+
+  const addMedToBatch = (med) => {
+    if (!med) return;
+    const k = String(med.id ?? med.name);
+    if (!medsMap.has(k)) medsMap.set(k, med);
+  };
+
+  if (task.targetMedicineId) {
+    const targetMed = sortedMeds.find((m) => String(m.id) === String(task.targetMedicineId));
+    if (targetMed) {
+      addMedToBatch(targetMed);
+      const others = sortedMeds.filter((m) => String(m.id) !== String(targetMed.id));
+      for (const other of others.slice(0, MAX_PAIRS_PER_CYCLE)) {
+        selectedPairs.push([targetMed, other]);
+        addMedToBatch(other);
+      }
+    }
+  }
+
+  if (selectedPairs.length === 0 && sortedMeds.length > 0) {
+    const pairPick = pickRotatingPairWindow(sortedMeds, cursor.pairOffset, MAX_PAIRS_PER_CYCLE);
+    selectedPairs = pairPick.pairs;
+    totalPossiblePairs = pairPick.totalPairs;
+    nextPairOffset = pairPick.nextPairOffset;
+
+    for (const [mA, mB] of selectedPairs) {
+      addMedToBatch(mA);
+      addMedToBatch(mB);
+    }
+
+    const medPick = pickRotatingMedicineWindow(sortedMeds, cursor.medOffset, MAX_MEDS_PER_CYCLE);
+    nextMedOffset = medPick.nextOffset;
+    for (const med of medPick.items) {
+      if (medsMap.size >= Math.max(MAX_MEDS_PER_CYCLE, selectedPairs.length * 2)) break;
+      addMedToBatch(med);
+    }
+  } else if (sortedMeds.length > 0 && medsMap.size < MAX_MEDS_PER_CYCLE) {
+    const medPick = pickRotatingMedicineWindow(sortedMeds, cursor.medOffset, MAX_MEDS_PER_CYCLE);
+    for (const med of medPick.items) {
+      if (medsMap.size >= MAX_MEDS_PER_CYCLE) break;
+      addMedToBatch(med);
+    }
+  }
+
+  cursorByPharmacy.set(pKey, { medOffset: nextMedOffset, pairOffset: nextPairOffset });
+
+  const activeMeds = [...medsMap.values()];
   const identities = new Map();
   const monographs = new Map();
 
+  // فحص مفرد واحد لكل دواء في نافذة الدورة (مع includeDailyMedXml: false لتجنب جلب XML بلا داعٍ وتكرار النداءات)
   for (const med of activeMeds) {
-    const id = await resolveMedicineIdentity(med, { fetchImpl });
-    identities.set(String(med.id ?? med.name), id);
-    const mono = await fetchDrugMonographs(id, { fetchImpl, includeDailyMedXml: false });
-    monographs.set(String(med.id ?? med.name), mono);
+    const k = String(med.id ?? med.name);
+    let resolvedId = null;
+    let resolvedMono = null;
 
-    const singleAnalysis = await analyzeSingleMedicine(med, { fetchImpl });
+    const singleAnalysis = await analyzeSingleMedicine(med, {
+      fetchImpl,
+      includeDailyMedXml: false,
+      openserpUrl: env.openserpUrl,
+      searxngUrl: env.searxngUrl,
+      onResolvedState: ({ identity, monographs: mono }) => {
+        resolvedId = identity;
+        resolvedMono = mono;
+      },
+    });
+    if (resolvedId) identities.set(k, resolvedId);
+    if (resolvedMono) monographs.set(k, resolvedMono);
     upsertMedicineAnalysis(store, singleAnalysis);
   }
 
-  // بناء الأزواج المطلوب فحصها (إذا عُيّن دواء مستهدف: يفحص مع كل الأدوية الأخرى؛ وإلا فحص شامل حتى الحد)
-  const pairs = [];
-  if (task.targetMedicineId) {
-    const targetMed = activeMeds.find((m) => String(m.id) === String(task.targetMedicineId));
-    if (targetMed) {
-      for (const other of activeMeds) {
-        if (String(other.id) === String(targetMed.id)) continue;
-        pairs.push([targetMed, other]);
-      }
-    }
-  }
-  if (pairs.length === 0) {
-    for (let i = 0; i < activeMeds.length; i += 1) {
-      for (let j = i + 1; j < activeMeds.length; j += 1) {
-        pairs.push([activeMeds[i], activeMeds[j]]);
-        if (pairs.length >= MAX_PAIRS_PER_CYCLE) break;
-      }
-      if (pairs.length >= MAX_PAIRS_PER_CYCLE) break;
-    }
-  }
-
   let cycleFailedSources = 0;
-  for (const [medA, medB] of pairs.slice(0, MAX_PAIRS_PER_CYCLE)) {
+  let reSearchedPairs = 0;
+  for (const [medA, medB] of selectedPairs.slice(0, MAX_PAIRS_PER_CYCLE)) {
     const kA = String(medA.id ?? medA.name);
     const kB = String(medB.id ?? medB.name);
     workerState.stats.totalChecks += 1;
 
     const result = await analyzeDrugPair(medA, medB, {
       fetchImpl,
-      preResolvedA: identities.get(kA),
-      preResolvedB: identities.get(kB),
-      preMonographsA: monographs.get(kA),
-      preMonographsB: monographs.get(kB),
+      preResolvedA: identities.get(kA) ?? null,
+      preResolvedB: identities.get(kB) ?? null,
+      preMonographsA: monographs.get(kA) ?? null,
+      preMonographsB: monographs.get(kB) ?? null,
       localInteractions,
-      includeWebSearch: Boolean(env.openserpUrl || env.searxngUrl),
+      includeWebSearch: false,
       openserpUrl: env.openserpUrl,
       searxngUrl: env.searxngUrl,
     });
+
+    if (result.researchTrace?.reSearchTriggered) {
+      reSearchedPairs += 1;
+    }
 
     upsertPairFinding(store, result);
     if (result.classification?.code === SAFETY_CLASSIFICATION.SOURCE_ACCESS_FAILED.code) {
@@ -334,14 +453,30 @@ export async function executeSafetyResearchTask(task, deps = runtime) {
 
   store.lastCheckedAt = new Date().toISOString();
   store.medicinesAnalyzed = activeMeds.length;
-  store.pairsChecked = pairs.length;
+  store.pairsChecked = selectedPairs.length;
+  store.reSearchedPairs = reSearchedPairs;
+  store.coverage = {
+    totalMedicinesInInventory: sortedMeds.length,
+    totalPossiblePairs,
+    medicinesPerCycleLimit: MAX_MEDS_PER_CYCLE,
+    pairsPerCycleLimit: MAX_PAIRS_PER_CYCLE,
+    scannedMedicinesInLastCycle: activeMeds.length,
+    scannedPairsInLastCycle: selectedPairs.length,
+    nextMedicineOffset: nextMedOffset,
+    nextPairOffset,
+    cyclesForFullPairCoverage: totalPossiblePairs > 0 ? Math.ceil(totalPossiblePairs / MAX_PAIRS_PER_CYCLE) : 1,
+    note:
+      sortedMeds.length > MAX_MEDS_PER_CYCLE || totalPossiblePairs > MAX_PAIRS_PER_CYCLE
+        ? `للحفاظ على استقرار الخادم وحدود المصادر الخارجية، يفحص كل دور حتى ${MAX_MEDS_PER_CYCLE} دواءً و${MAX_PAIRS_PER_CYCLE} زوجًا بالتناوب عبر الدورات الدورية حتى تغطية كامل المخزون (${sortedMeds.length} صنفًا / ${totalPossiblePairs} زوجًا).`
+        : `تغطية كاملة لمخزون الصيدلية الحالي في دورة واحدة (${sortedMeds.length} صنفًا / ${totalPossiblePairs} زوجًا).`,
+  };
   store.lastError = cycleFailedSources > 0 ? `تعذر الوصول لبعض المصادر في ${cycleFailedSources} زوجًا` : null;
 
   processedHashesByPharmacy.set(pKey, currentHash);
 
   const persistence = await maybePersistVerifiedSafetySummary(admin, columns, task.pharmacyId, store, task.trigger);
 
-  if (cycleFailedSources > 0 && pairs.length > 0 && cycleFailedSources === pairs.length) {
+  if (cycleFailedSources > 0 && selectedPairs.length > 0 && cycleFailedSources === selectedPairs.length) {
     scheduleRetryTask(task, store.lastError);
   }
 
@@ -351,7 +486,8 @@ export async function executeSafetyResearchTask(task, deps = runtime) {
     skipped: false,
     pharmacyId: task.pharmacyId,
     medicinesAnalyzed: activeMeds.length,
-    pairsChecked: pairs.length,
+    pairsChecked: selectedPairs.length,
+    coverage: store.coverage,
     persistence,
   };
 }
@@ -431,6 +567,7 @@ export function getSafetyStatusForPharmacy(pharmacyId = null) {
       lastError: store.lastError,
       medicinesAnalyzed: store.medicinesAnalyzed,
       pairsChecked: store.pairsChecked,
+      coverage: store.coverage,
       counts,
       pairFindings: store.pairFindings.slice(0, 25),
       medicineWarnings: store.medicineWarnings.slice(0, 25),
@@ -543,6 +680,7 @@ export function __resetSafetyWorkerForTests() {
   retryQueue.clear();
   resultsByPharmacy.clear();
   processedHashesByPharmacy.clear();
+  cursorByPharmacy.clear();
   workerState.running = false;
   workerState.cycleCount = 0;
   workerState.lastRunAt = null;

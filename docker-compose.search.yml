@@ -1,0 +1,65 @@
+# ملف Docker Compose مستقل لمحركي البحث الطبيين (OpenSERP + SearXNG)
+# لا يتعارض مع حاوية PharmaGuard AI الحالية ولا يكشف المنافذ على الإنترنت العام (مربوط بـ 127.0.0.1 والشبكة الداخلية فقط).
+#
+# التشغيل:
+#   docker compose --env-file docker/search/.env -f docker-compose.search.yml up -d
+
+name: pharmaguard-search
+
+services:
+  openserp:
+    image: karust/openserp:latest
+    container_name: pharmaguard-openserp
+    restart: unless-stopped
+    init: true
+    shm_size: 1gb
+    command: ["serve", "-a", "0.0.0.0", "-p", "7000"]
+    ports:
+      - "${SEARCH_BIND_HOST:-127.0.0.1}:${OPENSERP_PORT:-7000}:7000"
+    networks:
+      - pharmaguard_search_net
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1:7000/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+
+  searxng-valkey:
+    image: docker.io/valkey/valkey:8-alpine
+    container_name: pharmaguard-searxng-valkey
+    restart: unless-stopped
+    command: ["valkey-server", "--save", "", "--appendonly", "no"]
+    tmpfs:
+      - /data
+    networks:
+      - pharmaguard_search_net
+
+  searxng:
+    image: docker.io/searxng/searxng:latest
+    container_name: pharmaguard-searxng
+    restart: unless-stopped
+    depends_on:
+      - searxng-valkey
+    ports:
+      - "${SEARCH_BIND_HOST:-127.0.0.1}:${SEARXNG_PORT:-8080}:8080"
+    volumes:
+      - ./docker/search/searxng/settings.yml:/etc/searxng/settings.yml:ro
+    environment:
+      - SEARXNG_BASE_URL=http://127.0.0.1:${SEARXNG_PORT:-8080}/
+      - SEARXNG_SECRET=${SEARXNG_SECRET:?يرجى توليد قيمة SEARXNG_SECRET في ملف docker/search/.env أولًا}
+      - SEARXNG_VALKEY_URL=valkey://searxng-valkey:6379/0
+    networks:
+      - pharmaguard_search_net
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- 'http://127.0.0.1:8080/healthz' >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+
+networks:
+  pharmaguard_search_net:
+    name: pharmaguard-search-net
+    driver: bridge
+    attachable: true

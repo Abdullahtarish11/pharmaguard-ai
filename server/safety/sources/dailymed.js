@@ -50,12 +50,13 @@ function extractLoincSectionText(xml, loincCode, maxLen = 4000) {
  * يستعلم عن أحدث نشرة SPL في DailyMed ويستخرج أقسامها السريرية الموثقة.
  */
 export async function fetchDailyMedSpl(
-  { drugName = null, rxcui = null, fetchXml = true } = {},
+  { drugName = null, rxcui = null, setId: explicitSetId = null, knownMeta = null, fetchXml = true } = {},
   { fetchImpl = fetch } = {},
 ) {
   const cleanName = String(drugName ?? '').trim();
   const cleanRxcui = rxcui ? String(rxcui).trim() : null;
-  if (!cleanName && !cleanRxcui) {
+  const cleanExplicitSetId = explicitSetId ? String(explicitSetId).trim() : null;
+  if (!cleanName && !cleanRxcui && !cleanExplicitSetId) {
     return {
       ok: false,
       source: 'DailyMed',
@@ -66,64 +67,80 @@ export async function fetchDailyMedSpl(
     };
   }
 
-  const key = `${cleanRxcui ?? ''}|${cleanName.toLowerCase()}|${fetchXml ? 'xml' : 'meta'}`;
+  const key = `${cleanExplicitSetId ?? ''}|${cleanRxcui ?? ''}|${cleanName.toLowerCase()}|${fetchXml ? 'xml' : 'meta'}`;
   const cached = cache.get(key);
   if (cached && Date.now() - cached.at < CACHE_TTL_MS && fetchImpl === fetch) {
     return cached.value;
   }
 
   const retrievedAt = new Date().toISOString();
-  const listUrl = cleanName
-    ? `${DAILYMED_BASE}/spls.json?drug_name=${encodeURIComponent(cleanName)}&pagesize=2`
-    : `${DAILYMED_BASE}/spls.json?rxcui=${encodeURIComponent(cleanRxcui)}&pagesize=2`;
+  const listUrl = cleanExplicitSetId
+    ? `${DAILYMED_BASE}/spls/${encodeURIComponent(cleanExplicitSetId)}.xml`
+    : cleanName
+      ? `${DAILYMED_BASE}/spls.json?drug_name=${encodeURIComponent(cleanName)}&pagesize=2`
+      : `${DAILYMED_BASE}/spls.json?rxcui=${encodeURIComponent(cleanRxcui)}&pagesize=2`;
 
   try {
-    const res = await fetchImpl(listUrl, {
-      headers: { Accept: 'application/json', 'User-Agent': 'PharmaGuardAI/1.0' },
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    });
+    let top = knownMeta
+      ? {
+          setid: knownMeta.setId ?? cleanExplicitSetId,
+          title: knownMeta.title ?? null,
+          published_date: knownMeta.publishedDate ?? null,
+          spl_version: knownMeta.splVersion ?? null,
+        }
+      : null;
 
-    if (!res.ok) {
-      throw new Error(`DailyMed HTTP ${res.status}`);
-    }
-
-    const json = await res.json();
-    const items = Array.isArray(json?.data) ? json.data : [];
-
-    // محاولة احتياطية بـ rxcui إذا لم يعد drug_name نتائج
-    if (items.length === 0 && cleanName && cleanRxcui) {
-      const byRxUrl = `${DAILYMED_BASE}/spls.json?rxcui=${encodeURIComponent(cleanRxcui)}&pagesize=2`;
-      const rxRes = await fetchImpl(byRxUrl, {
+    if (!cleanExplicitSetId && !top) {
+      const res = await fetchImpl(listUrl, {
         headers: { Accept: 'application/json', 'User-Agent': 'PharmaGuardAI/1.0' },
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
-      if (rxRes.ok) {
-        const rxJson = await rxRes.json();
-        if (Array.isArray(rxJson?.data)) items.push(...rxJson.data);
+
+      if (!res.ok) {
+        throw new Error(`DailyMed HTTP ${res.status}`);
       }
+
+      const json = await res.json();
+      const items = Array.isArray(json?.data) ? json.data : [];
+
+      // محاولة احتياطية بـ rxcui إذا لم يعد drug_name نتائج
+      if (items.length === 0 && cleanName && cleanRxcui) {
+        const byRxUrl = `${DAILYMED_BASE}/spls.json?rxcui=${encodeURIComponent(cleanRxcui)}&pagesize=2`;
+        const rxRes = await fetchImpl(byRxUrl, {
+          headers: { Accept: 'application/json', 'User-Agent': 'PharmaGuardAI/1.0' },
+          signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+        });
+        if (rxRes.ok) {
+          const rxJson = await rxRes.json();
+          if (Array.isArray(rxJson?.data)) items.push(...rxJson.data);
+        }
+      }
+
+      if (items.length === 0) {
+        const miss = {
+          ok: true,
+          source: 'DailyMed',
+          issuer: 'U.S. National Library of Medicine (DailyMed SPL)',
+          found: false,
+          setId: null,
+          title: null,
+          publishedDate: null,
+          sourceUrl: listUrl,
+          sections: null,
+          retrievedAt,
+          error: null,
+        };
+        if (fetchImpl === fetch) cache.set(key, { at: Date.now(), value: miss });
+        return miss;
+      }
+
+      top = items[0];
     }
 
-    if (items.length === 0) {
-      const miss = {
-        ok: true,
-        source: 'DailyMed',
-        issuer: 'U.S. National Library of Medicine (DailyMed SPL)',
-        found: false,
-        setId: null,
-        title: null,
-        publishedDate: null,
-        sourceUrl: listUrl,
-        sections: null,
-        retrievedAt,
-        error: null,
-      };
-      if (fetchImpl === fetch) cache.set(key, { at: Date.now(), value: miss });
-      return miss;
-    }
-
-    const top = items[0];
-    const setId = top.setid;
-    const sourceUrl = `https://dailymed.nlm.nih.gov/dailymed/drugInfo.cfm?setid=${encodeURIComponent(setId)}`;
+    const setId = cleanExplicitSetId ?? top?.setid ?? null;
+    const sourceUrl = setId
+      ? `https://dailymed.nlm.nih.gov/dailymed/drugInfo.cfm?setid=${encodeURIComponent(setId)}`
+      : listUrl;
     let sections = null;
 
     if (fetchXml && setId) {
@@ -153,11 +170,11 @@ export async function fetchDailyMedSpl(
       issuer: 'U.S. National Library of Medicine (DailyMed SPL)',
       found: true,
       setId,
-      title: top.title ?? null,
-      publishedDate: top.published_date ?? null,
-      splVersion: top.spl_version ?? null,
+      title: top?.title ?? null,
+      publishedDate: top?.published_date ?? null,
+      splVersion: top?.spl_version ?? null,
       sourceUrl,
-      apiUrl: listUrl,
+      apiUrl: knownMeta?.apiUrl ?? listUrl,
       sections,
       retrievedAt,
       error: null,

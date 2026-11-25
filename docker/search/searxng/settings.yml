@@ -1,0 +1,27 @@
+# إعدادات SearXNG لخدمة البحث الاحتياطي في PharmaGuard AI
+# ملاحظة: يتم حقن server.secret_key تلقائيًا عبر متغير البيئة SEARXNG_SECRET في Docker Compose
+# دون تخزين أي مفتاح سري داخل هذا الملف.
+
+use_default_settings: true
+
+general:
+  instance_name: "PharmaGuard Search"
+  debug: false
+
+search:
+  safe_search: 0
+  autocomplete: ""
+  default_lang: "all"
+  formats:
+    - html
+    - json
+
+server:
+  bind_address: "0.0.0.0"
+  port: 8080
+  limiter: false
+  image_proxy: false
+  method: "GET"
+
+valkey:
+  url: valkey://searxng-valkey:6379/0

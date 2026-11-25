@@ -70,7 +70,8 @@ export const api = {
   agentRuns: (token) => request('/agent/runs', { token }),
   agentSweepLatest: (token) => request('/agent/sweep/latest', { token }),
   runAgentSweep: (token) => request('/agent/sweep', { method: 'POST', token }),
-  safetyStatus: (token) => request('/agent/safety/status', { token }),
+  safetyStatus: (token, { probe = false } = {}) =>
+    request(`/agent/safety/status${probe ? '?probe=1' : ''}`, { token }),
   runSafetyCheck: (token, payload = {}) => request('/agent/safety/check', { method: 'POST', token, body: payload }),
   safetyStorageCompat: (token) => request('/agent/safety/storage-compat', { token }),
   subscribeAgentStream: (token, { onEvent, onStatusChange } = {}) => {

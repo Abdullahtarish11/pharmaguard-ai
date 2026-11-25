@@ -67,7 +67,11 @@ function parseAbstractsFromXml(xml) {
 /**
  * يبحث عن دراسات وتقارير تداخل موثقة بين دوائين في PubMed.
  */
-export async function searchPubMedInteraction(drugA, drugB, { fetchImpl = fetch, maxResults = 3 } = {}) {
+export async function searchPubMedInteraction(
+  drugA,
+  drugB,
+  { fetchImpl = fetch, maxResults = 3, mode = 'strict' } = {},
+) {
   const a = String(drugA ?? '').trim();
   const b = String(drugB ?? '').trim();
   if (!a || !b) {
@@ -82,15 +86,23 @@ export async function searchPubMedInteraction(drugA, drugB, { fetchImpl = fetch,
     };
   }
 
+  const normalizedMode = ['broad', 'clinical_review'].includes(mode) ? mode : 'strict';
   const pair = [a.toLowerCase(), b.toLowerCase()].sort();
-  const cacheKey = `${pair[0]}::${pair[1]}`;
+  const cacheKey = `${normalizedMode}::${pair[0]}::${pair[1]}`;
   const cached = cache.get(cacheKey);
   if (cached && Date.now() - cached.at < CACHE_TTL_MS && fetchImpl === fetch) {
     return cached.value;
   }
 
   const retrievedAt = new Date().toISOString();
-  const term = `("${a}"[Title/Abstract] AND "${b}"[Title/Abstract] AND ("drug interactions"[MeSH Terms] OR interaction[Title/Abstract] OR contraindicated[Title/Abstract] OR rhabdomyolysis[Title/Abstract] OR toxicity[Title/Abstract]))`;
+  let term;
+  if (normalizedMode === 'broad') {
+    term = `("${a}"[All Fields] AND "${b}"[All Fields] AND (interaction[All Fields] OR coadministration[All Fields] OR pharmacokinetics[All Fields] OR toxicity[All Fields] OR adverse[All Fields]))`;
+  } else if (normalizedMode === 'clinical_review') {
+    term = `("${a}"[Title/Abstract] AND "${b}"[Title/Abstract] AND ("clinical"[Title/Abstract] OR "systematic review"[Publication Type] OR "case reports"[Publication Type] OR "pharmacokinetics"[MeSH Terms] OR "drug interactions"[MeSH Terms]))`;
+  } else {
+    term = `("${a}"[Title/Abstract] AND "${b}"[Title/Abstract] AND ("drug interactions"[MeSH Terms] OR interaction[Title/Abstract] OR contraindicated[Title/Abstract] OR rhabdomyolysis[Title/Abstract] OR toxicity[Title/Abstract]))`;
+  }
   const searchUrl = `${EUTILS_BASE}/esearch.fcgi?db=pubmed&term=${encodeURIComponent(term)}&retmode=json&retmax=${maxResults}&sort=relevance`;
 
   try {
@@ -102,6 +114,7 @@ export async function searchPubMedInteraction(drugA, drugB, { fetchImpl = fetch,
       const empty = {
         ok: true,
         source: 'PubMed',
+        mode: normalizedMode,
         issuer: 'NCBI PubMed (National Library of Medicine)',
         totalCount: 0,
         articles: [],

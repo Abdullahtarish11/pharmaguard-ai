@@ -18,7 +18,7 @@ import { lookupRxNorm } from './rxnorm.js';
 import { fetchOpenFdaLabel } from './openfda.js';
 import { fetchDailyMedSpl } from './dailymed.js';
 import { searchPubMedInteraction } from './pubmed.js';
-import { getSearchEngineConfigStatus, searchMedicalWeb } from './openserp.js';
+import { getSearchEngineConfigStatus, probeSearchEngines, searchMedicalWeb } from './openserp.js';
 
 const sourceHealth = {
   rxnorm: { id: 'rxnorm', name: 'RxNorm (NLM)', status: 'ready', lastSuccessAt: null, lastError: null, requests: 0, failures: 0 },
@@ -42,8 +42,8 @@ function trackSourceResult(sourceKey, res) {
   }
 }
 
-export function getSourcesTelemetry() {
-  const searchEngine = getSearchEngineConfigStatus();
+export function getSourcesTelemetry(searchEngineOverride = null) {
+  const searchEngine = searchEngineOverride ?? getSearchEngineConfigStatus();
   return {
     officialSources: Object.values(sourceHealth).map((s) => ({ ...s })),
     searchEngine,
@@ -54,6 +54,11 @@ export function getSourcesTelemetry() {
     excludedSources: EXCLUDED_SOURCES,
     aiModelsUsed: 'none (بدون Gemini أو أي نموذج مدفوع)',
   };
+}
+
+export async function getProbedSourcesTelemetry({ openserpUrl, searxngUrl, fetchImpl = fetch } = {}) {
+  const searchEngine = await probeSearchEngines({ openserpUrl, searxngUrl, fetchImpl });
+  return getSourcesTelemetry(searchEngine);
 }
 
 /**

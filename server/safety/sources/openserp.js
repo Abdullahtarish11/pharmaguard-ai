@@ -239,22 +239,40 @@ export async function fetchOriginalSourcePage(url, { fetchImpl = fetch, resolveD
 }
 
 async function queryOpenSerp(baseUrl, query, { fetchImpl = fetch, engines = 'google,duckduckgo,bing', limit = 6 } = {}) {
-  const endpoint = `${baseUrl}/mega/search?text=${encodeURIComponent(query)}&engines=${encodeURIComponent(engines)}&limit=${limit}`;
-  const res = await fetchImpl(endpoint, {
-    headers: { Accept: 'application/json', 'User-Agent': 'PharmaGuardAI/1.0' },
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-  });
-  if (!res.ok) throw new Error(`OpenSERP HTTP ${res.status}`);
-  const data = await res.json();
-  const list = Array.isArray(data) ? data : Array.isArray(data?.results) ? data.results : [];
-  return list
-    .filter((item) => item?.url)
-    .map((item) => ({
-      title: String(item.title ?? '').trim(),
-      url: String(item.url).trim(),
-      snippet: String(item.description ?? item.snippet ?? '').trim(),
-      engine: item.engine ?? 'openserp',
-    }));
+  const params = `text=${encodeURIComponent(query)}&engines=${encodeURIComponent(engines)}&limit=${limit}`;
+  const candidateEndpoints = [`${baseUrl}/mega/search?${params}`, `${baseUrl}/v1/mega/search?${params}`];
+  let lastRes = null;
+
+  for (const endpoint of candidateEndpoints) {
+    const res = await fetchImpl(endpoint, {
+      headers: { Accept: 'application/json', 'User-Agent': 'PharmaGuardAI/1.0' },
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      const list = Array.isArray(data)
+        ? data
+        : Array.isArray(data?.results)
+          ? data.results
+          : Array.isArray(data?.data)
+            ? data.data
+            : [];
+      return list
+        .filter((item) => item?.url)
+        .map((item) => ({
+          title: String(item.title ?? '').trim(),
+          url: String(item.url).trim(),
+          snippet: String(item.description ?? item.snippet ?? '').trim(),
+          engine: item.engine ?? 'openserp',
+        }));
+    }
+    lastRes = res;
+    if (res.status !== 404 && res.status !== 405) {
+      throw new Error(`OpenSERP HTTP ${res.status}`);
+    }
+  }
+
+  throw new Error(`OpenSERP HTTP ${lastRes?.status ?? 404}`);
 }
 
 async function querySearXNG(baseUrl, query, { fetchImpl = fetch, language = 'all', limit = 6 } = {}) {
@@ -289,6 +307,47 @@ function normalizeEngineUrl(raw) {
   return '';
 }
 
+/**
+ * ينقّي رسائل أخطاء الاتصال بالمحرك لمنع تسرب عناوين الخوادم الداخلية أو المنافذ أو بيانات الاعتماد.
+ */
+export function sanitizeEngineError(err, urlsToRedact = []) {
+  const rawMsg = String(err?.message ?? err ?? '').trim();
+  if (!rawMsg) return 'تعذر الاتصال بمحرك البحث';
+  if (err?.name === 'TimeoutError' || /timeout|aborted/i.test(rawMsg)) {
+    return 'انتهت مهلة الاتصال بمحرك البحث';
+  }
+
+  let cleaned = rawMsg;
+  for (const rawUrl of urlsToRedact) {
+    if (!rawUrl) continue;
+    try {
+      const parsed = new URL(rawUrl);
+      const variants = [
+        rawUrl,
+        parsed.origin,
+        parsed.host,
+        parsed.hostname,
+      ].filter(Boolean);
+      for (const v of variants) {
+        cleaned = cleaned.split(v).join('[محرك-داخلي]');
+      }
+    } catch {
+      cleaned = cleaned.split(String(rawUrl)).join('[محرك-داخلي]');
+    }
+  }
+
+  cleaned = cleaned
+    .replace(/https?:\/\/[^\s"'<>]+/gi, '[رابط-محجوب]')
+    .replace(/\b(?:\d{1,3}\.){3}\d{1,3}(?::\d+)?\b/g, '[عنوان-محجوب]');
+
+  if (/ECONNREFUSED/i.test(cleaned)) return 'تعذر الاتصال بمحرك البحث (رفض الاتصال)';
+  if (/ENOTFOUND|EAI_AGAIN/i.test(cleaned)) return 'تعذر الوصول إلى مضيف محرك البحث';
+  if (/ECONNRESET|EPIPE/i.test(cleaned)) return 'انقطع الاتصال بمحرك البحث أثناء الاستعلام';
+  if (/fetch failed/i.test(cleaned)) return 'تعذر إنشاء اتصال شبكي بمحرك البحث';
+
+  return cleaned.length > 180 ? `${cleaned.slice(0, 180)}…` : cleaned;
+}
+
 export function getSearchEngineConfigStatus({ openserpUrl = env.openserpUrl, searxngUrl = env.searxngUrl } = {}) {
   const cleanPrimary = normalizeEngineUrl(openserpUrl);
   const cleanFallback = normalizeEngineUrl(searxngUrl);
@@ -302,13 +361,13 @@ export function getSearchEngineConfigStatus({ openserpUrl = env.openserpUrl, sea
       name: 'OpenSERP',
       configured: configuredPrimary,
       status: configuredPrimary ? 'configured' : 'not_configured',
-      statusLabel: configuredPrimary ? 'مُعد' : 'غير مُعد',
+      statusLabel: configuredPrimary ? 'مُعد (بانتظار الاختبار الحي)' : 'غير مُعد',
     },
     fallback: {
       name: 'SearXNG',
       configured: configuredFallback,
       status: configuredFallback ? 'configured' : 'not_configured',
-      statusLabel: configuredFallback ? 'مُعد' : 'غير مُعد',
+      statusLabel: configuredFallback ? 'مُعد (بانتظار الاختبار الحي)' : 'غير مُعد',
     },
     status: configured ? 'configured' : 'not_configured',
     statusLabel: configured ? 'مُعد' : 'غير مُعد',
@@ -316,6 +375,78 @@ export function getSearchEngineConfigStatus({ openserpUrl = env.openserpUrl, sea
       ? 'محرك البحث الشامل مفعّل إلى جانب المصادر الطبية الرسمية.'
       : 'غير مُعد — يعتمد الوكيل على المصادر الطبية الرسمية المدمجة فقط (RxNorm وopenFDA وDailyMed وPubMed).',
     hostingRequirements: OPENSERP_HOSTING_REQUIREMENTS,
+  };
+}
+
+/**
+ * يختبر الاتصال الفعلي بمحركي OpenSERP وSearXNG فقط عند ضبط عنوانيهما.
+ * إذا لم يُضبط أي متغير، يعيد فورًا not_configured دون أي اتصال شبكي ودون افتراض عملهما.
+ */
+export async function probeSearchEngines({
+  openserpUrl = env.openserpUrl,
+  searxngUrl = env.searxngUrl,
+  fetchImpl = fetch,
+} = {}) {
+  const baseStatus = getSearchEngineConfigStatus({ openserpUrl, searxngUrl });
+  const cleanPrimary = normalizeEngineUrl(openserpUrl);
+  const cleanFallback = normalizeEngineUrl(searxngUrl);
+  const checkedAt = new Date().toISOString();
+
+  if (!baseStatus.configured) {
+    return {
+      ...baseStatus,
+      tested: false,
+      checkedAt,
+    };
+  }
+
+  const probeOne = async (name, fn) => {
+    const start = Date.now();
+    try {
+      const results = await fn();
+      return {
+        name,
+        configured: true,
+        tested: true,
+        reachable: true,
+        status: 'connected',
+        statusLabel: 'متصل ومختبر حيًا',
+        latencyMs: Date.now() - start,
+        sampleCount: Array.isArray(results) ? results.length : 0,
+        error: null,
+      };
+    } catch (err) {
+      return {
+        name,
+        configured: true,
+        tested: true,
+        reachable: false,
+        status: 'unreachable',
+        statusLabel: 'مُعد لكنه غير قابل للوصول',
+        latencyMs: Date.now() - start,
+        sampleCount: 0,
+        error: sanitizeEngineError(err, [cleanPrimary, cleanFallback]),
+      };
+    }
+  };
+
+  const primary = cleanPrimary
+    ? await probeOne('OpenSERP', () => queryOpenSerp(cleanPrimary, 'aspirin drug label', { fetchImpl, limit: 2 }))
+    : { ...baseStatus.primary, tested: false, reachable: false };
+
+  const fallback = cleanFallback
+    ? await probeOne('SearXNG', () => querySearXNG(cleanFallback, 'aspirin drug label', { fetchImpl, limit: 2 }))
+    : { ...baseStatus.fallback, tested: false, reachable: false };
+
+  const anyReachable = Boolean(primary.reachable || fallback.reachable);
+  return {
+    ...baseStatus,
+    tested: true,
+    checkedAt,
+    primary,
+    fallback,
+    status: anyReachable ? 'connected' : 'unreachable',
+    statusLabel: anyReachable ? 'متصل ومختبر حيًا' : 'متعثر (تعذر الاتصال بالمحرك)',
   };
 }
 
@@ -381,7 +512,7 @@ export async function searchMedicalWeb(
         });
         engineUsed = 'OpenSERP';
       } catch (err) {
-        engineErrors.push(`OpenSERP (${query}): ${err?.message ?? err}`);
+        engineErrors.push(`OpenSERP: ${sanitizeEngineError(err, [cleanOpenSerp, cleanSearXNG])}`);
       }
     }
 
@@ -393,18 +524,32 @@ export async function searchMedicalWeb(
         });
         engineUsed = 'SearXNG';
       } catch (err) {
-        engineErrors.push(`SearXNG (${query}): ${err?.message ?? err}`);
+        engineErrors.push(`SearXNG: ${sanitizeEngineError(err, [cleanOpenSerp, cleanSearXNG])}`);
       }
     }
 
-    for (const item of rawResults ?? []) {
-      const normalizedUrl = item.url.split('#')[0];
-      if (seenUrls.has(normalizedUrl)) continue;
+    const candidates = (rawResults ?? []).filter((item) => {
+      const normalizedUrl = String(item?.url ?? '').split('#')[0];
+      if (!normalizedUrl || seenUrls.has(normalizedUrl)) return false;
       seenUrls.add(normalizedUrl);
-      const reliability = classifySourceReliability(normalizedUrl);
+      return true;
+    });
+
+    const safetyChecks = await Promise.all(
+      candidates.map(async (item) => {
+        const normalizedUrl = String(item.url).split('#')[0];
+        const check = await validateSafePublicUrl(normalizedUrl, { resolveDns });
+        return { item, normalizedUrl, check };
+      }),
+    );
+
+    for (const { item, normalizedUrl, check } of safetyChecks) {
+      if (!check.safe) continue;
+      const safeUrl = check.url || normalizedUrl;
+      const reliability = classifySourceReliability(safeUrl);
       collected.push({
         ...item,
-        url: normalizedUrl,
+        url: safeUrl,
         query,
         ...reliability,
         pageExtracted: false,
@@ -425,7 +570,7 @@ export async function searchMedicalWeb(
       engineUsed: null,
       status: 'unreachable',
       results: [],
-      error: engineErrors.join(' | '),
+      error: [...new Set(engineErrors)].join(' | '),
       retrievedAt: new Date().toISOString(),
     };
   }

@@ -15,11 +15,129 @@ function formatDateTime(iso) {
   });
 }
 
+function safeExternalUrl(rawUrl) {
+  if (!rawUrl || typeof rawUrl !== 'string') return null;
+  try {
+    const parsed = new URL(rawUrl.trim());
+    if (parsed.protocol === 'https:' || parsed.protocol === 'http:') {
+      return parsed.toString();
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
 function classificationBadgeClass(code) {
   if (code === 'documented_interaction') return 'badge badge-danger';
   if (code === 'source_conflict' || code === 'documented_warning') return 'badge badge-warn';
   if (code === 'source_access_failed') return 'badge badge-danger';
   return 'badge badge-muted';
+}
+
+function stepBadgeClass(status) {
+  if (status === 'matched' || status === 'executed') return 'badge';
+  if (status === 'error') return 'badge badge-danger';
+  if (status === 'partial') return 'badge badge-warn';
+  return 'badge badge-muted';
+}
+
+function stepStatusLabel(status) {
+  if (status === 'matched') return 'طابق';
+  if (status === 'executed') return 'نُفّذ';
+  if (status === 'partial') return 'جزئي';
+  if (status === 'error') return 'تعذر';
+  if (status === 'miss' || status === 'no_new_data') return 'بلا نتيجة';
+  return status || '—';
+}
+
+function ResearchTraceBlock({ trace }) {
+  if (!trace) return null;
+  const plan = trace.plan;
+  const rounds = trace.rounds ?? [];
+
+  return (
+    <details open style={{ marginTop: '0.35rem' }}>
+      <summary className="small" style={{ cursor: 'pointer', fontWeight: 600 }}>
+        مسار الاستقصاء والتفكير التشغيلي للوكيل ({trace.roundsExecuted ?? rounds.length} جولة • {trace.totalDurationMs ?? 0} مللي ثانية
+        {trace.reSearchTriggered ? ' • أُعيد البحث تلقائيًا' : ''})
+      </summary>
+
+      <div className="grid" style={{ gap: '0.5rem', marginTop: '0.55rem' }}>
+        {plan && (
+          <div className="live-feed-item">
+            <div className="live-feed-meta">
+              <span className="badge">خطة البحث</span>
+              <span className="badge badge-muted">{plan.languageProfile?.label ?? '—'}</span>
+              <span className="badge badge-muted">الحد الأقصى: {plan.maxRounds} جولات</span>
+              <span className="badge badge-muted">الويب المفتوح: {plan.webSearchStatusLabel ?? 'غير مُعد'}</span>
+            </div>
+            <p className="small" style={{ margin: '0.25rem 0 0' }}>{plan.goal}</p>
+            {Array.isArray(plan.plannedTools) && plan.plannedTools.length > 0 && (
+              <div className="muted small" style={{ marginTop: '0.25rem' }}>
+                الأدوات المختارة: {plan.plannedTools.map((t) => t.name).join(' ← ')}
+              </div>
+            )}
+          </div>
+        )}
+
+        {trace.reSearchTriggered && Array.isArray(trace.reSearchReasons) && trace.reSearchReasons.length > 0 && (
+          <div className="alert alert-warn" style={{ margin: 0, padding: '0.5rem 0.75rem' }}>
+            <strong>سبب إعادة البحث:</strong> {trace.reSearchReasons.join(' • ')}
+          </div>
+        )}
+
+        {rounds.map((r) => (
+          <div key={r.round} className="live-feed-item">
+            <div className="live-feed-meta">
+              <span className="badge">الجولة {r.round}</span>
+              <strong className="small">{r.phase}</strong>
+              <span className="muted small">{r.durationMs ?? 0} مللي ثانية</span>
+            </div>
+            {r.reason && <p className="muted small" style={{ margin: '0.2rem 0' }}>{r.reason}</p>}
+            <div className="grid" style={{ gap: '0.3rem', marginTop: '0.3rem' }}>
+              {(r.steps ?? []).map((step, sIdx) => (
+                <div key={sIdx} className="small" style={{ display: 'flex', gap: '0.45rem', alignItems: 'baseline', flexWrap: 'wrap' }}>
+                  <span className={stepBadgeClass(step.status)}>{stepStatusLabel(step.status)}</span>
+                  <strong>{step.tool}:</strong>
+                  <span>{step.detail}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </details>
+  );
+}
+
+function EvidenceItemCard({ ev }) {
+  const safeUrl = safeExternalUrl(ev.sourceUrl);
+  return (
+    <div className="live-feed-item">
+      <div className="live-feed-meta">
+        <span className="badge">{ev.sourceName}</span>
+        {ev.severity && <span className="badge badge-danger">{ev.severity}</span>}
+        {ev.direction === 'negated' && <span className="badge badge-muted">ينفي التداخل</span>}
+        {ev.publishedDate && <span className="muted small">تاريخ المصدر: {ev.publishedDate}</span>}
+        {ev.issuer && <span className="muted small">{ev.issuer}</span>}
+        {safeUrl && (
+          <a
+            href={safeUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="small"
+            style={{ color: 'var(--accent-dark)', textDecoration: 'underline' }}
+          >
+            رابط المصدر الأصلي
+          </a>
+        )}
+      </div>
+      <p className="small" dir="auto" style={{ margin: '0.25rem 0 0' }}>
+        {ev.originalText}
+      </p>
+    </div>
+  );
 }
 
 export default function SafetyResearchPanel({ token, canRun = false }) {
@@ -29,12 +147,13 @@ export default function SafetyResearchPanel({ token, canRun = false }) {
   const [checkResult, setCheckResult] = useState(null);
   const [busy, setBusy] = useState(false);
   const [inventoryBusy, setInventoryBusy] = useState(false);
+  const [probeBusy, setProbeBusy] = useState(false);
   const [error, setError] = useState(null);
 
-  const loadStatus = useCallback(async () => {
+  const loadStatus = useCallback(async ({ probe = false } = {}) => {
     if (!token) return;
     try {
-      const data = await api.safetyStatus(token);
+      const data = await api.safetyStatus(token, { probe });
       setStatus(data);
     } catch (err) {
       setError(err.message);
@@ -78,24 +197,53 @@ export default function SafetyResearchPanel({ token, canRun = false }) {
     }
   }
 
+  async function handleProbeSearchEngines() {
+    if (!token) return;
+    setProbeBusy(true);
+    setError(null);
+    try {
+      await loadStatus({ probe: true });
+    } finally {
+      setProbeBusy(false);
+    }
+  }
+
   const worker = status?.worker;
   const telemetry = status?.telemetry;
   const pharmacy = status?.pharmacy;
   const pairFindings = pharmacy?.pairFindings ?? [];
 
+  const result = checkResult?.result;
+  const evidenceGroups = result?.evidenceGroups;
+  const officialList = evidenceGroups
+    ? [...(evidenceGroups.official ?? []), ...(evidenceGroups.local ?? [])]
+    : (result?.evidences ?? []).filter((e) => e.sourceName !== 'PubMed');
+  const literatureList = evidenceGroups
+    ? (evidenceGroups.literature ?? [])
+    : (result?.evidences ?? []).filter((e) => e.sourceName === 'PubMed');
+  const webList = evidenceGroups?.webSearch ?? result?.webSearchResults ?? [];
+
   return (
     <section className="card">
       <div className="card-head">
         <div>
-          <h2 className="section-title">وكيل سلامة الأدوية — البحث الطبي متعدد المصادر</h2>
+          <h2 className="section-title">وكيل سلامة الأدوية — البحث والاستقصاء المستقل</h2>
           <p className="muted small" style={{ margin: 0 }}>
-            تحقق مباشر ومجاني من RxNorm وopenFDA وDailyMed وPubMed (دون Gemini أو أي نموذج مدفوع، مع استبعاد DDInter حاليًا)
+            يخطط البحث، ويستدعي RxNorm وopenFDA وDailyMed وPubMed (+ OpenSERP/SearXNG عند ضبطهما)، ويعيد البحث عند النقص أو التعارض دون Gemini
           </p>
         </div>
         <div className="btn-row" style={{ marginTop: 0 }}>
           <span className={worker?.active ? 'badge' : 'badge badge-muted'}>
             {worker?.statusLabel ?? 'بانتظار التحميل'}
           </span>
+          <button
+            className="btn btn-soft btn-sm"
+            type="button"
+            onClick={handleProbeSearchEngines}
+            disabled={probeBusy}
+          >
+            {probeBusy ? 'جارٍ فحص المحرك…' : 'فحص جاهزية OpenSERP/SearXNG'}
+          </button>
           <button
             className="btn btn-soft btn-sm"
             type="button"
@@ -121,15 +269,11 @@ export default function SafetyResearchPanel({ token, canRun = false }) {
         <div className="stat">
           <span>محرك البحث الشامل (OpenSERP / SearXNG)</span>
           <strong style={{ fontSize: '0.96rem' }}>
-            {telemetry?.searchEngine?.configured
-              ? telemetry.searchEngine.primary?.configured
-                ? telemetry.searchEngine.primary.name
-                : telemetry.searchEngine.fallback?.name
-              : telemetry?.searchEngine?.statusLabel ?? 'غير مُعد'}
+            {telemetry?.searchEngine?.statusLabel ?? 'غير مُعد'}
           </strong>
           <span className="hint">
             {telemetry?.searchEngine?.configured
-              ? 'مفعّل لنتائج الويب والجهات الإقليمية'
+              ? `الأساسي: ${telemetry.searchEngine.primary?.statusLabel} • البديل: ${telemetry.searchEngine.fallback?.statusLabel}`
               : 'غير مُعد — يعتمد الوكيل على المصادر الطبية الرسمية المدمجة فقط'}
           </span>
         </div>
@@ -189,72 +333,102 @@ export default function SafetyResearchPanel({ token, canRun = false }) {
         </div>
         <div className="field">
           <button className="btn btn-primary" type="submit" disabled={!canRun || busy || !drugA.trim()}>
-            {busy ? 'جارٍ البحث في المصادر…' : 'تحقق من المصادر الرسمية'}
+            {busy ? 'جارٍ التخطيط والبحث…' : 'بدء البحث المستقل'}
           </button>
         </div>
       </form>
 
-      {checkResult?.result && (
-        <div className="stat" style={{ marginTop: '1rem', gap: '0.6rem', background: '#ffffff' }}>
+      {result && (
+        <div className="stat" style={{ marginTop: '1rem', gap: '0.65rem', background: '#ffffff' }}>
           <div className="card-head" style={{ marginBottom: 0 }}>
             <strong style={{ fontSize: '0.98rem' }}>
               {checkResult.mode === 'pair'
-                ? `${checkResult.result.medicineA?.name} × ${checkResult.result.medicineB?.name}`
-                : checkResult.result.medicine?.name}
+                ? `${result.medicineA?.name} × ${result.medicineB?.name}`
+                : result.medicine?.name}
             </strong>
-            <span className={classificationBadgeClass(checkResult.result.classification?.code)}>
-              {checkResult.result.classification?.label}
+            <span className={classificationBadgeClass(result.classification?.code)}>
+              {result.classification?.label}
             </span>
           </div>
 
           {checkResult.mode === 'pair' ? (
             <>
-              <p className="small" style={{ margin: 0 }}>{checkResult.result.arabicSummary}</p>
+              <p className="small" style={{ margin: 0 }}>{result.arabicSummary}</p>
               <div className="muted small">
-                المادة الفعالة 1: <strong>{checkResult.result.medicineA?.primaryIngredient ?? '—'}</strong>
-                {' | '}المادة الفعالة 2: <strong>{checkResult.result.medicineB?.primaryIngredient ?? '—'}</strong>
-                {checkResult.result.documentedSeverity && (
+                المادة الفعالة 1: <strong>{result.medicineA?.primaryIngredient ?? '—'}</strong>
+                {' | '}المادة الفعالة 2: <strong>{result.medicineB?.primaryIngredient ?? '—'}</strong>
+                {result.documentedSeverity && (
                   <>
-                    {' | '}الشدة الموثقة: <strong>{checkResult.result.documentedSeverity}</strong>
+                    {' | '}الشدة الموثقة: <strong>{result.documentedSeverity}</strong>
                   </>
                 )}
               </div>
 
-              {checkResult.result.evidences?.length > 0 && (
-                <div className="grid" style={{ gap: '0.5rem' }}>
-                  {checkResult.result.evidences.map((ev, idx) => (
-                    <div key={idx} className="live-feed-item">
-                      <div className="live-feed-meta">
-                        <span className="badge">{ev.sourceName}</span>
-                        {ev.severity && <span className="badge badge-danger">{ev.severity}</span>}
-                        {ev.publishedDate && <span className="muted small">تاريخ المصدر: {ev.publishedDate}</span>}
-                        {ev.sourceUrl && (
-                          <a
-                            href={ev.sourceUrl}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="small"
-                            style={{ color: 'var(--accent-dark)', textDecoration: 'underline' }}
-                          >
-                            رابط المصدر الأصلي
-                          </a>
-                        )}
-                      </div>
-                      <p className="small" dir="auto" style={{ margin: '0.25rem 0 0' }}>
-                        {ev.originalText}
-                      </p>
-                    </div>
+              <ResearchTraceBlock trace={result.researchTrace} />
+
+              {officialList.length > 0 && (
+                <div className="grid" style={{ gap: '0.45rem' }}>
+                  <strong className="small">1) الأدلة الطبية الرسمية وقاعدة الصيدلية ({officialList.length})</strong>
+                  {officialList.map((ev, idx) => (
+                    <EvidenceItemCard key={`off-${idx}`} ev={ev} />
                   ))}
                 </div>
               )}
 
-              {checkResult.result.clinicalWarnings?.length > 0 && (
+              {literatureList.length > 0 && (
+                <div className="grid" style={{ gap: '0.45rem' }}>
+                  <strong className="small">2) الأبحاث العلمية المحكّمة — PubMed ({literatureList.length})</strong>
+                  {literatureList.map((ev, idx) => (
+                    <EvidenceItemCard key={`lit-${idx}`} ev={ev} />
+                  ))}
+                </div>
+              )}
+
+              {webList.length > 0 && (
+                <div className="grid" style={{ gap: '0.45rem' }}>
+                  <strong className="small">3) نتائج محرك البحث المفتوح — OpenSERP / SearXNG ({webList.length})</strong>
+                  {webList.map((item, idx) => {
+                    const safeItemUrl = safeExternalUrl(item.url);
+                    return (
+                      <div key={`web-${idx}`} className="live-feed-item">
+                        <div className="live-feed-meta">
+                          <span className={item.clinicallyCertified ? 'badge' : 'badge badge-warn'}>
+                            {item.tierLabel}
+                          </span>
+                          <span className="badge badge-muted">{item.engine}</span>
+                          {item.publishedDate && <span className="muted small">{item.publishedDate}</span>}
+                          {safeItemUrl && (
+                            <a
+                              href={safeItemUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="small"
+                              style={{ color: 'var(--accent-dark)', textDecoration: 'underline' }}
+                            >
+                              فتح الصفحة الأصلية
+                            </a>
+                          )}
+                        </div>
+                        <p className="small" dir="auto" style={{ margin: '0.25rem 0 0' }}>
+                          <strong>{item.pageTitle || item.title}</strong>
+                          {(item.pageText || item.snippet) ? ` — ${(item.pageText || item.snippet).slice(0, 320)}` : ''}
+                        </p>
+                        {item.nonAuthoritativeNotice && (
+                          <p className="muted small" style={{ margin: '0.2rem 0 0' }}>{item.nonAuthoritativeNotice}</p>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {result.clinicalWarnings?.length > 0 && (
                 <details>
                   <summary className="small" style={{ cursor: 'pointer', fontWeight: 600 }}>
-                    تحذيرات الجرعة والعمر والحالة والحساسية الموثقة ({checkResult.result.clinicalWarnings.length})
+                    تحذيرات الجرعة والعمر والحالة والحساسية الموثقة ({result.clinicalWarnings.length})
                   </summary>
                   <div className="grid" style={{ gap: '0.45rem', marginTop: '0.5rem' }}>
-                    {checkResult.result.clinicalWarnings.map((w, idx) => (
+                    {result.clinicalWarnings.map((w, idx) => (
                       <div key={idx} className="live-feed-item">
                         <div className="live-feed-meta">
                           <span className="badge badge-warn">{w.medicine}</span>
@@ -269,31 +443,35 @@ export default function SafetyResearchPanel({ token, canRun = false }) {
               )}
             </>
           ) : (
-            <div className="grid" style={{ gap: '0.45rem' }}>
+            <div className="grid" style={{ gap: '0.5rem' }}>
               <div className="muted small">
-                المادة الفعالة الموحدة (RxNorm): <strong>{checkResult.result.identity?.primaryIngredient ?? '—'}</strong>
-                {checkResult.result.identity?.strength && ` | التركيز: ${checkResult.result.identity.strength}`}
-                {checkResult.result.identity?.dosageForm && ` | الشكل: ${checkResult.result.identity.dosageForm}`}
+                المادة الفعالة الموحدة (RxNorm): <strong>{result.identity?.primaryIngredient ?? '—'}</strong>
+                {result.identity?.strength && ` | التركيز: ${result.identity.strength}`}
+                {result.identity?.dosageForm && ` | الشكل: ${result.identity.dosageForm}`}
               </div>
-              {(checkResult.result.warnings ?? []).map((w, idx) => (
-                <div key={idx} className="live-feed-item">
-                  <div className="live-feed-meta">
-                    <span className="badge badge-warn">{w.categoryLabel}</span>
-                    {w.publishedDate && <span className="muted small">{w.publishedDate}</span>}
-                    {w.sourceUrl && (
-                      <a href={w.sourceUrl} target="_blank" rel="noreferrer" className="small" style={{ textDecoration: 'underline' }}>
-                        النشرة الرسمية
-                      </a>
-                    )}
+              <ResearchTraceBlock trace={result.researchTrace} />
+              {(result.warnings ?? []).map((w, idx) => {
+                const safeWarnUrl = safeExternalUrl(w.sourceUrl);
+                return (
+                  <div key={idx} className="live-feed-item">
+                    <div className="live-feed-meta">
+                      <span className="badge badge-warn">{w.categoryLabel}</span>
+                      {w.publishedDate && <span className="muted small">{w.publishedDate}</span>}
+                      {safeWarnUrl && (
+                        <a href={safeWarnUrl} target="_blank" rel="noreferrer" className="small" style={{ textDecoration: 'underline' }}>
+                          النشرة الرسمية
+                        </a>
+                      )}
+                    </div>
+                    <p className="small" dir="ltr" style={{ margin: '0.2rem 0 0' }}>{w.originalText}</p>
                   </div>
-                  <p className="small" dir="ltr" style={{ margin: '0.2rem 0 0' }}>{w.originalText}</p>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
 
           <div className="alert alert-warn" style={{ marginBottom: 0 }}>
-            {checkResult.result.disclaimer}
+            {result.disclaimer}
           </div>
         </div>
       )}
@@ -310,6 +488,7 @@ export default function SafetyResearchPanel({ token, canRun = false }) {
                   <th>الدواء الأول</th>
                   <th>الدواء الثاني</th>
                   <th>التصنيف الموثق</th>
+                  <th>الجولات</th>
                   <th>الشدة</th>
                   <th>المصادر والملخص</th>
                 </tr>
@@ -324,14 +503,18 @@ export default function SafetyResearchPanel({ token, canRun = false }) {
                         {item.classification?.label}
                       </span>
                     </td>
+                    <td className="small">
+                      {item.researchTrace?.roundsExecuted ?? 1}
+                      {item.researchTrace?.reSearchTriggered ? ' (استدراك)' : ''}
+                    </td>
                     <td>{item.documentedSeverity || '—'}</td>
                     <td className="small">
                       {item.arabicSummary}
-                      {item.evidences?.[0]?.sourceUrl && (
+                      {safeExternalUrl(item.evidences?.[0]?.sourceUrl) && (
                         <>
                           {' '}
                           <a
-                            href={item.evidences[0].sourceUrl}
+                            href={safeExternalUrl(item.evidences[0].sourceUrl)}
                             target="_blank"
                             rel="noreferrer"
                             style={{ color: 'var(--accent-dark)', textDecoration: 'underline' }}
@@ -349,8 +532,14 @@ export default function SafetyResearchPanel({ token, canRun = false }) {
         </div>
       )}
 
+      {pharmacy?.coverage?.note && (
+        <p className="muted small" style={{ marginTop: '0.75rem', marginBottom: 0 }}>
+          {pharmacy.coverage.note}
+        </p>
+      )}
+
       {worker?.hostingContinuityNote && (
-        <p className="muted small" style={{ marginTop: '0.85rem', marginBottom: 0 }}>
+        <p className="muted small" style={{ marginTop: '0.5rem', marginBottom: 0 }}>
           {worker.hostingContinuityNote}
         </p>
       )}
